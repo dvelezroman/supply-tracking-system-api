@@ -1,0 +1,206 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  ACTOR
+  VIEWER
+}
+
+enum ActorType {
+  SUPPLIER
+  MANUFACTURER
+  WAREHOUSE
+  DISTRIBUTOR
+  RETAILER
+  CONSUMER
+  FARM
+  LAB
+  MATURATION
+  CO_PACKER
+}
+
+enum EventType {
+  CREATED
+  HARVESTED
+  TRANSPORTED
+  RECEIVED
+  QUALITY_CHECKED
+  PROCESSED
+  PACKAGED
+  STORED
+  SHIPPED
+  SOLD
+  DELIVERED
+}
+
+enum Presentation {
+  SHELL_ON
+  BUTTERFLY
+  PD_TAIL_OFF
+  PD_TAIL_ON
+}
+
+enum Packaging {
+  IQF
+  CAJAS
+}
+
+enum SizeClassification {
+  S16_20
+  S21_25
+  S26_30
+  S31_35
+  S36_40
+  S41_50
+}
+
+enum ColorSalmoFan {
+  A1
+  A2
+  A3
+  A4
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      UserRole @default(VIEWER)
+  actorId   String?
+  actor     Actor?   @relation(fields: [actorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+/// A supply chain participant. One actor can play multiple roles
+/// (e.g. a farm that also does co-packing) by registering separate Actor records.
+model Actor {
+  id       String    @id @default(uuid())
+  name     String
+  type     ActorType
+  location String?
+  contact  String?
+  metadata Json?
+
+  users  User[]
+  events TraceabilityEvent[]
+
+  // Lot relations — one actor can be the farm/lab/maturation/co-packer
+  // for many lots, and each role is tracked separately.
+  lotsAsFarm        Lot[] @relation("LotFarm")
+  lotsAsLab         Lot[] @relation("LotLab")
+  lotsAsMaturation  Lot[] @relation("LotMaturation")
+  lotsAsCoPacker    Lot[] @relation("LotCoPacker")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("actors")
+}
+
+/// Master product catalogue — represents the product species/brand, not a batch.
+/// Example: "Camarón Premium Marea Alta (Cola)" is one Product;
+/// each harvest batch becomes a Lot linked to this Product.
+model Product {
+  id          String  @id @default(uuid())
+  sku         String  @unique
+  name        String
+  description String?
+  category    String?
+  metadata    Json?
+
+  lots Lot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("products")
+}
+
+/// A production batch (lote). One Product can have many Lots.
+/// All 17 shrimp-specific parameters are captured here.
+model Lot {
+  id      String @id @default(uuid())
+  /// Canonical format: P{pool}-{MMYY}-{presentation code}-{packaging}
+  /// Example: P2-0226-PD-IQF
+  /// This must be unique across the system.
+  lotCode String @unique
+
+  product   Product @relation(fields: [productId], references: [id])
+  productId String
+
+  // ── Lot attributes ───────────────────────────────────────────────────────
+  presentation       Presentation
+  packaging          Packaging
+  weightKg           Float
+  sizeClassification SizeClassification
+  colorSalmoFan      ColorSalmoFan
+  texture            String?
+  certifications     String[]
+  lotSizeLbs         Float
+
+  // ── Harvest data (captured from the HARVESTED event, denormalized here
+  //    for fast lookup without joining events) ────────────────────────────
+  harvestDate        DateTime
+  poolNumber         Int
+  harvestWeightGrams Float
+
+  // ── Participating actors ─────────────────────────────────────────────────
+  farm         Actor @relation("LotFarm",       fields: [farmId],        references: [id])
+  farmId       String
+  lab          Actor @relation("LotLab",        fields: [labId],         references: [id])
+  labId        String
+  maturation   Actor @relation("LotMaturation", fields: [maturationId],  references: [id])
+  maturationId String
+  coPacker     Actor @relation("LotCoPacker",   fields: [coPackerId],    references: [id])
+  coPackerId   String
+
+  // ── Append-only event chain ───────────────────────────────────────────────
+  events TraceabilityEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([harvestDate])
+  @@map("lots")
+}
+
+/// Append-only event log — never update or delete rows here.
+/// Each row is one checkpoint in the traceability chain of a Lot.
+model TraceabilityEvent {
+  id        String    @id @default(uuid())
+  lotId     String
+  lot       Lot       @relation(fields: [lotId], references: [id])
+  actorId   String
+  actor     Actor     @relation(fields: [actorId], references: [id])
+  eventType EventType
+  location  String?
+  notes     String?
+  /// Flexible per-event metadata. Examples:
+  ///   HARVESTED:       { poolNumber, harvestWeightGrams, waterTemperature }
+  ///   QUALITY_CHECKED: { colorSalmoFan, texture, inspectorName }
+  ///   TRANSPORTED:     { vehiclePlate, departureTemp, arrivalTemp }
+  ///   STORED:          { chamberNumber, storageTemp }
+  metadata  Json?
+  timestamp DateTime  @default(now())
+
+  @@index([lotId])
+  @@index([actorId])
+  @@index([timestamp])
+  @@map("traceability_events")
+}
