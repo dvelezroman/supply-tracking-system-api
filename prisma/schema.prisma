@@ -122,6 +122,8 @@ model Product {
   description String?
   category    String?
   metadata    Json?
+  /// Default public QR page visibility for **new** lots (copied into `Lot.publicVisibility` on create).
+  publicVisibilityDefaults Json?
 
   lots Lot[]
 
@@ -168,6 +170,13 @@ model Lot {
   maturationId String
   coPacker     Actor @relation("LotCoPacker",   fields: [coPackerId],    references: [id])
   coPackerId   String
+
+  /// Full URL embedded in the lot QR (typically FRONTEND_URL + /trace/:lotCode), set at creation.
+  publicTraceUrl String?
+  /// PNG data URL (`data:image/png;base64,...`) generated when the lot is created (or seeded).
+  qrCodeDataUrl  String? @db.Text
+  /// What consumers see on the public `/trace/:lotCode` page when scanning the QR (admin-configurable).
+  publicVisibility Json?
 
   // ── Append-only event chain ───────────────────────────────────────────────
   events TraceabilityEvent[]

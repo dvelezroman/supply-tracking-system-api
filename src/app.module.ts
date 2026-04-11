@@ -10,6 +10,7 @@ import { TraceabilityModule } from './modules/traceability/traceability.module';
 import { LotsModule } from './modules/lots/lots.module';
 import { PublicTraceModule } from './modules/public-trace/public-trace.module';
 import { HealthModule } from './modules/health/health.module';
+import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
   imports: [
@@ -27,5 +28,6 @@ import { HealthModule } from './modules/health/health.module';
     PublicTraceModule,
     HealthModule,
   ],
+  providers: [RolesGuard],
 })
 export class AppModule {}

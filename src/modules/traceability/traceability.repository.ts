@@ -36,4 +36,13 @@ export class TraceabilityRepository {
   count(where?: Prisma.TraceabilityEventWhereInput) {
     return this.prisma.traceabilityEvent.count({ where });
   }
+
+  /** All events for lots belonging to this product, chronological (oldest first). */
+  findByProductId(productId: string) {
+    return this.prisma.traceabilityEvent.findMany({
+      where: { lot: { productId } },
+      include: { lot: { include: { product: true } }, actor: true },
+      orderBy: { timestamp: 'asc' },
+    });
+  }
 }

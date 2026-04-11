@@ -8,6 +8,15 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+/** Paths browsers often request on whatever host is open (e.g. API :3000) — not real API errors. */
+const BROWSER_PROBE_PATHS = new Set([
+  '/sw.js',
+  '/service-worker.js',
+  '/worker.js',
+  '/favicon.ico',
+  '/robots.txt',
+]);
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -27,10 +36,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Internal server error';
 
-    this.logger.error(
-      `${request.method} ${request.url} — ${status}`,
-      exception instanceof Error ? exception.stack : undefined,
-    );
+    const probe404 =
+      status === HttpStatus.NOT_FOUND &&
+      request.method === 'GET' &&
+      BROWSER_PROBE_PATHS.has(request.path);
+
+    if (probe404) {
+      this.logger.debug(`${request.method} ${request.path} — ${status} (browser probe, no route)`);
+    } else {
+      this.logger.error(
+        `${request.method} ${request.url} — ${status}`,
+        exception instanceof Error ? exception.stack : undefined,
+      );
+    }
 
     response.status(status).json({
       success: false,

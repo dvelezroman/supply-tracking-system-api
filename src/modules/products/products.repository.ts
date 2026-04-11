@@ -11,7 +11,21 @@ export class ProductsRepository {
   }
 
   findById(id: string) {
-    return this.prisma.product.findUnique({ where: { id } });
+    return this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        lots: {
+          select: {
+            id: true,
+            lotCode: true,
+            harvestDate: true,
+            lotSizeLbs: true,
+            presentation: true,
+          },
+          orderBy: { harvestDate: 'desc' },
+        },
+      },
+    });
   }
 
   findBySku(sku: string) {
@@ -26,6 +40,7 @@ export class ProductsRepository {
     return this.prisma.product.findMany({
       ...params,
       orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { lots: true } } },
     });
   }
 
