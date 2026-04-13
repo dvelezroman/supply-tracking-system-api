@@ -22,19 +22,16 @@ const TOTAL_H = PAGE_HEIGHT - MARGIN * 2 - HEADER_H;
 const CELL_W = (TOTAL_W - GUTTER * (COLS - 1)) / COLS;
 const CELL_H = (TOTAL_H - GUTTER * (ROWS - 1)) / ROWS;
 
-const PANEL_BG = '#F2F0E9';
-/** Dashed border = crop guide (recorte). */
-const CUT_GUIDE_DASH_ON = 2.4;
-const CUT_GUIDE_DASH_OFF = 2;
-const CUT_GUIDE_COLOR = '#7A7873';
-const TEXT = '#141414';
-const MUTED = '#4A4A4A';
-const BRAND = '#E87A5D';
-const ACCENT_BLUE = '#21A0B2';
-const ACCENT_ORANGE = '#E87A5D';
+/** Fondo blanco y borde fino (estilo etiqueta clásica / exportación). */
+const PANEL_BG = '#FFFFFF';
+const BORDER_COLOR = '#1a1a1a';
+const TEXT = '#000000';
+const MUTED = '#333333';
+/** Marca / títulos en azul corporativo (legible en blanco y negro). */
+const BRAND = '#1a237e';
 
 /** ~24mm at print scale within 5×5 grid; do not shrink without re-validating phone scans. */
-const QR_DRAW = 66;
+const QR_DRAW = 70;
 const INNER_PAD = 5;
 
 export interface QrPdfOptions {
@@ -129,15 +126,14 @@ export class PdfService {
     const innerW = cellW - INNER_PAD * 2;
     const innerH = cellH - INNER_PAD * 2;
 
-    doc.roundedRect(cellX, cellY, cellW, cellH, 3).fill(PANEL_BG);
-    doc.save();
-    doc.lineJoin('round').lineWidth(0.55).strokeColor(CUT_GUIDE_COLOR);
-    doc.dash(CUT_GUIDE_DASH_ON, { space: CUT_GUIDE_DASH_OFF });
-    doc.roundedRect(cellX, cellY, cellW, cellH, 3).stroke();
-    doc.undash();
-    doc.restore();
+    doc.roundedRect(cellX, cellY, cellW, cellH, 2).fill(PANEL_BG);
+    doc
+      .roundedRect(cellX, cellY, cellW, cellH, 2)
+      .strokeColor(BORDER_COLOR)
+      .lineWidth(0.55)
+      .stroke();
 
-    const footTop = innerY + innerH - 16;
+    const footTop = innerY + innerH - 17;
     let cy = innerY + 2;
     const brandName = ctx.brandName.toUpperCase();
     const maxLogoW = Math.min(68, innerW - 8);
@@ -169,33 +165,22 @@ export class PdfService {
     });
     cy += 5.5;
 
-    doc.font('Helvetica-Bold').fontSize(7).fillColor(TEXT).text(ctx.lotCode, innerX, cy, {
+    doc.font('Helvetica-Bold').fontSize(7.2).fillColor(TEXT).text(ctx.lotCode, innerX, cy, {
       width: innerW,
       align: 'center',
     });
-    cy += 8.5;
+    cy += 9;
 
-    const bcW = Math.min(innerW - 6, 94);
-    try {
-      doc.image(barcodeBuffer, innerX + (innerW - bcW) / 2, cy, { width: bcW, height: 12 });
-    } catch {
-      doc.font('Helvetica').fontSize(5).fillColor(MUTED).text(ctx.lotCode, innerX, cy, {
-        width: innerW,
-        align: 'center',
-      });
-    }
-    cy += 14;
-
-    const minQrTop = footTop - QR_DRAW - 14;
+    /** QR primero (más visible al escanear), código de barras debajo — layout clásico de etiqueta. */
+    const minQrTop = footTop - QR_DRAW - 22;
     if (cy > minQrTop) cy = minQrTop;
 
     const qrX = innerX + (innerW - QR_DRAW) / 2;
-    doc.roundedRect(qrX - 2, cy - 2, QR_DRAW + 4, QR_DRAW + 4, 2).fill('#FFFFFF');
-    doc.roundedRect(qrX - 2, cy - 2, QR_DRAW + 4, QR_DRAW + 4, 2).strokeColor('#E8E6E0').lineWidth(0.4).stroke();
+    doc.rect(qrX - 1, cy - 1, QR_DRAW + 2, QR_DRAW + 2).strokeColor(BORDER_COLOR).lineWidth(0.35).stroke();
     doc.image(qrBuffer, qrX, cy, { width: QR_DRAW, height: QR_DRAW });
-    cy += QR_DRAW + 3;
+    cy += QR_DRAW + 4;
 
-    if (cy + 4.5 <= footTop - 0.5) {
+    if (cy + 4.5 <= footTop - 12) {
       doc
         .font('Helvetica')
         .fontSize(3.8)
@@ -205,6 +190,21 @@ export class PdfService {
           align: 'center',
           lineGap: 0.2,
         });
+      cy += 5;
+    }
+
+    const bcW = Math.min(innerW - 6, 96);
+    const minBcBottom = footTop - 0.5;
+    if (cy + 12 <= minBcBottom) {
+      try {
+        doc.image(barcodeBuffer, innerX + (innerW - bcW) / 2, cy, { width: bcW, height: 12 });
+      } catch {
+        doc.font('Helvetica').fontSize(5).fillColor(MUTED).text(ctx.lotCode, innerX, cy, {
+          width: innerW,
+          align: 'center',
+        });
+      }
+      cy += 14;
     }
 
     const prod = this.truncate(ctx.productDescriptor, 52);
@@ -226,7 +226,7 @@ export class PdfService {
       .font('Helvetica-Bold')
       .fontSize(4.9)
       .fillColor(TEXT)
-      .text(`PESO NETO: ${wStr} KG e`, innerX, footTop + 11, { width: innerW, align: 'center' });
+      .text(`PESO NETO: ${wStr} KG`, innerX, footTop + 11, { width: innerW, align: 'center' });
   }
 
   private truncate(s: string, max: number): string {
@@ -238,15 +238,13 @@ export class PdfService {
   private drawLogoPlaceholder(doc: PDFKit.PDFDocument, centerX: number, centerY: number, maxW: number): void {
     const w = Math.min(maxW, 52);
     const x = centerX - w / 2;
-    const y = centerY - 4;
+    const y = centerY - 2;
     doc
-      .moveTo(x, y + 6)
-      .quadraticCurveTo(x + w * 0.35, y - 1, x + w * 0.55, y + 5)
-      .quadraticCurveTo(x + w * 0.78, y + 11, x + w, y + 4)
-      .strokeColor(ACCENT_BLUE)
-      .lineWidth(1.05)
+      .rect(x, y, w, 10)
+      .strokeColor(BORDER_COLOR)
+      .lineWidth(0.35)
       .stroke();
-    doc.circle(centerX + w * 0.12, y + 5, 2.8).fill(ACCENT_ORANGE);
+    doc.font('Helvetica').fontSize(5).fillColor(MUTED).text('LOGO', x, y + 2.5, { width: w, align: 'center' });
   }
 
   private async fetchLogo(url?: string): Promise<Buffer | null> {
