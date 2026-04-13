@@ -24,11 +24,12 @@ export class TraceabilityService {
     ]);
 
     const { lotId, actorId, ...rest } = dto;
-    return this.traceabilityRepository.create({
+    const created = await this.traceabilityRepository.create({
       ...rest,
-      lot:   { connect: { id: lotId } },
+      lot: { connect: { id: lotId } },
       actor: { connect: { id: actorId } },
     });
+    return this.mapEventRow(created);
   }
 
   async findAll(query: ListEventsQueryDto) {
@@ -108,6 +109,7 @@ export class TraceabilityService {
     return {
       id: e.id,
       lotId: e.lotId,
+      lotCode: e.lot.lotCode,
       productId: e.lot.productId,
       actorId: e.actorId,
       eventType: e.eventType,
