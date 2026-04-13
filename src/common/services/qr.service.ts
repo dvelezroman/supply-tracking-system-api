@@ -17,13 +17,13 @@ export class QrService {
   }
 
   /**
-   * High-resolution QR for print PDFs (scaled down in PDFKit for sharpness).
-   * Error correction M balances density vs. damaged labels; use H only if payload stays small enough.
+   * PNG for PDF labels: enough pixels for ~70pt draw on A4; smaller than 640px
+   * cuts encode time and PDF size (same bitmap reused for every label on the sheet).
    */
   async generatePngForPdfLabel(url: string): Promise<Buffer> {
     return QRCode.toBuffer(url, {
       type: 'png',
-      width: 640,
+      width: 400,
       margin: 2,
       errorCorrectionLevel: 'M',
       color: { dark: '#000000', light: '#ffffff' },

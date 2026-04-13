@@ -12,9 +12,9 @@ const MARGIN = 22;
 const HEADER_H = 18;
 const GUTTER = 2;
 
-/** 5×3 packaging labels per sheet (15 per A4 page). */
+/** 5×5 packaging labels per sheet (25 per A4 page). */
 const COLS = 5;
-const ROWS = 3;
+const ROWS = 5;
 export const QR_PER_PAGE = COLS * ROWS;
 
 const TOTAL_W = PAGE_WIDTH - MARGIN * 2;
