@@ -84,7 +84,7 @@ const ACTOR_SEEDS = [
   {
     key: 'coPacker' as const,
     id: 'seed-copacker-001',
-    name: 'Brisas del Mar',
+    name: 'Marea Alta',
     type: ActorType.CO_PACKER,
     location: 'Ecuador',
     contact: 'ops@brisasdelmar.com',
@@ -527,20 +527,20 @@ async function main() {
         {
           eventType: EventType.PROCESSED,
           actorKey: 'coPacker',
-          location: 'Brisas del Mar',
+          location: 'Marea Alta',
           offsetHours: 46,
         },
         {
           eventType: EventType.PACKAGED,
           actorKey: 'coPacker',
-          location: 'Brisas del Mar — empaque IQF',
+          location: 'Marea Alta — empaque IQF',
           notes: 'Empaque y etiquetado',
           offsetHours: 54,
         },
         {
           eventType: EventType.STORED,
           actorKey: 'coPacker',
-          location: 'Cámara fría Brisas del Mar',
+          location: 'Cámara fría Marea Alta',
           metadata: { storageTemp: '-18°C' },
           offsetHours: 58,
         },
@@ -597,14 +597,14 @@ async function main() {
       {
         eventType: EventType.PROCESSED,
         actorKey: 'coPacker',
-        location: 'Brisas del Mar',
+        location: 'Marea Alta',
         notes: 'Proceso según especificación de lote',
         offsetHours: 36,
       },
       {
         eventType: EventType.PACKAGED,
         actorKey: 'coPacker',
-        location: 'Brisas del Mar',
+        location: 'Marea Alta',
         notes: 'Empaque según presentación del lote',
         metadata: { line: 'IQF / cajas' },
         offsetHours: 44,
@@ -612,7 +612,7 @@ async function main() {
       {
         eventType: EventType.STORED,
         actorKey: 'coPacker',
-        location: 'Cámara Fría — Brisas del Mar',
+        location: 'Cámara Fría — Marea Alta',
         metadata: { chamberNumber: 3, storageTemp: '-18°C' },
         offsetHours: 48,
       },

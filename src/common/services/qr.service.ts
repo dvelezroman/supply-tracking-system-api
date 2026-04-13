@@ -17,6 +17,20 @@ export class QrService {
   }
 
   /**
+   * High-resolution QR for print PDFs (scaled down in PDFKit for sharpness).
+   * Error correction M balances density vs. damaged labels; use H only if payload stays small enough.
+   */
+  async generatePngForPdfLabel(url: string): Promise<Buffer> {
+    return QRCode.toBuffer(url, {
+      type: 'png',
+      width: 640,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#000000', light: '#ffffff' },
+    });
+  }
+
+  /**
    * Generates a QR code as a base64 data URL.
    * Used to embed inline in JSON responses.
    */

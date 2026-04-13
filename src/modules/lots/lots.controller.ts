@@ -23,7 +23,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Response } from 'express';
-import { UserRole } from '@prisma/client';
+import { Packaging, UserRole } from '@prisma/client';
 import { LotsService } from './lots.service';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
@@ -124,18 +124,18 @@ export class LotsController {
   @Get('code/:lotCode/qr/pdf')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({
-    summary: 'Generate a PDF sheet of QR code labels for a lot',
-    description: `Returns a printable A4 PDF with N copies of the lot QR code arranged in a ${QR_PER_PAGE}-per-page grid (5 columns × 6 rows). All QR codes point to the same public traceability URL. Maximum ${MAX_COPIES} copies per request.`,
+    summary: 'Generate a PDF sheet of packaging-style traceability labels for a lot',
+    description: `Returns a printable A4 PDF with up to ${QR_PER_PAGE} labels per page (5×5 grid): brand/logo, production lot, Code 128 barcode, camera-friendly QR (public trace URL), product and origin lines, net weight. Default copies=${QR_PER_PAGE}. Max ${MAX_COPIES} per request. Configure LABEL_LOGO_URL and LABEL_BRAND_NAME on the API.`,
   })
   @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
   @ApiQuery({
     name: 'copies',
     required: false,
-    description: `Number of QR labels to generate (default: ${QR_PER_PAGE}, max: ${MAX_COPIES})`,
+    description: `Number of labels to generate (default: ${QR_PER_PAGE}, max: ${MAX_COPIES})`,
     example: 25,
   })
   @ApiProduces('application/pdf')
-  @ApiResponse({ status: 200, description: 'PDF file with QR label grid' })
+  @ApiResponse({ status: 200, description: 'PDF file with packaging label grid' })
   @ApiResponse({ status: 400, description: 'copies must be between 1 and 500' })
   @ApiResponse({ status: 404, description: 'Lot not found' })
   async getQrPdf(
@@ -150,10 +150,18 @@ export class LotsController {
     const lot = await this.lotsService.findByLotCode(lotCode);
     const traceUrl = lot.publicTraceUrl ?? this.buildTraceUrl(lotCode);
 
+    const brandName =
+      this.configService.get<string>('labelBrandName')?.trim() || lot.product.name;
+    const logoUrl = this.configService.get<string>('labelLogoUrl')?.trim();
+
     const pdf = await this.pdfService.generateQrPdf(traceUrl, {
       lotCode,
-      productName: lot.product.name,
+      productDescriptor: this.buildProductDescriptor(lot),
+      originLine: this.buildOriginLine(lot),
+      netWeightKg: lot.weightKg,
       copies,
+      brandName,
+      logoUrl: logoUrl || undefined,
     });
 
     const filename = `qr-labels-${lotCode}-x${copies}.pdf`;
@@ -199,5 +207,18 @@ export class LotsController {
   private buildTraceUrl(lotCode: string): string {
     const base = this.configService.get<string>('frontendUrl') ?? 'http://localhost:4200';
     return `${base.replace(/\/$/, '')}/trace/${encodeURIComponent(lotCode)}`;
+  }
+
+  private buildProductDescriptor(lot: {
+    product: { name: string };
+    packaging: Packaging;
+  }): string {
+    const pkg = lot.packaging === Packaging.IQF ? 'IQF' : 'Cajas';
+    return `${lot.product.name} · ${pkg}`;
+  }
+
+  private buildOriginLine(lot: { farm: { name: string; location: string | null } }): string {
+    const parts = [lot.farm.name?.trim(), lot.farm.location?.trim()].filter(Boolean) as string[];
+    return parts.length ? parts.join(' — ') : '—';
   }
 }
