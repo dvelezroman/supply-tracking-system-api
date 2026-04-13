@@ -12,9 +12,9 @@ const MARGIN = 22;
 const HEADER_H = 18;
 const GUTTER = 2;
 
-/** 5×5 packaging labels per sheet (plan). */
+/** 5×3 packaging labels per sheet (15 per A4 page). */
 const COLS = 5;
-const ROWS = 5;
+const ROWS = 3;
 export const QR_PER_PAGE = COLS * ROWS;
 
 const TOTAL_W = PAGE_WIDTH - MARGIN * 2;
@@ -30,9 +30,12 @@ const MUTED = '#333333';
 /** Marca / títulos en azul corporativo (legible en blanco y negro). */
 const BRAND = '#1a237e';
 
-/** ~24mm at print scale within 5×5 grid; do not shrink without re-validating phone scans. */
+/** ~24mm at print scale; do not shrink without re-validating phone scans. */
 const QR_DRAW = 70;
 const INNER_PAD = 5;
+/** Espacio bajo el QR: texto de escaneo (puede ser 2 líneas) + aire + código de barras. */
+const BELOW_QR_RESERVE = 30;
+const TEXT_AFTER_GAP = 3;
 
 export interface QrPdfOptions {
   lotCode: string;
@@ -133,7 +136,7 @@ export class PdfService {
       .lineWidth(0.55)
       .stroke();
 
-    const footTop = innerY + innerH - 17;
+    const footTop = innerY + innerH - 18;
     let cy = innerY + 2;
     const brandName = ctx.brandName.toUpperCase();
     const maxLogoW = Math.min(68, innerW - 8);
@@ -156,55 +159,70 @@ export class PdfService {
       .font('Helvetica-Bold')
       .fontSize(6.6)
       .fillColor(BRAND)
-      .text(brandName, innerX, cy, { width: innerW, align: 'center', characterSpacing: 0.35 });
-    cy += 8;
+      .text(brandName, innerX, cy, { width: innerW, align: 'center', characterSpacing: 0.35, lineGap: 1 });
+    cy = doc.y + TEXT_AFTER_GAP;
 
-    doc.font('Helvetica-Bold').fontSize(4.5).fillColor(TEXT).text('LOTE DE PRODUCCIÓN', innerX, cy, {
-      width: innerW,
-      align: 'center',
-    });
-    cy += 5.5;
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(4.5)
+      .fillColor(TEXT)
+      .text('LOTE DE PRODUCCIÓN', innerX, cy, {
+        width: innerW,
+        align: 'center',
+        lineGap: 0.5,
+      });
+    cy = doc.y + TEXT_AFTER_GAP;
 
-    doc.font('Helvetica-Bold').fontSize(7.2).fillColor(TEXT).text(ctx.lotCode, innerX, cy, {
-      width: innerW,
-      align: 'center',
-    });
-    cy += 9;
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(7.2)
+      .fillColor(TEXT)
+      .text(ctx.lotCode, innerX, cy, {
+        width: innerW,
+        align: 'center',
+        lineGap: 0.5,
+      });
+    cy = doc.y + TEXT_AFTER_GAP;
 
     /** QR primero (más visible al escanear), código de barras debajo — layout clásico de etiqueta. */
-    const minQrTop = footTop - QR_DRAW - 22;
+    const minQrTop = footTop - QR_DRAW - BELOW_QR_RESERVE;
     if (cy > minQrTop) cy = minQrTop;
 
     const qrX = innerX + (innerW - QR_DRAW) / 2;
     doc.rect(qrX - 1, cy - 1, QR_DRAW + 2, QR_DRAW + 2).strokeColor(BORDER_COLOR).lineWidth(0.35).stroke();
     doc.image(qrBuffer, qrX, cy, { width: QR_DRAW, height: QR_DRAW });
-    cy += QR_DRAW + 4;
+    cy += QR_DRAW + 5;
 
-    if (cy + 4.5 <= footTop - 12) {
-      doc
-        .font('Helvetica')
-        .fontSize(3.8)
-        .fillColor(MUTED)
-        .text('ESCANEAR PARA TRAZABILIDAD Y DETALLES DEL LOTE', innerX, cy, {
-          width: innerW,
-          align: 'center',
-          lineGap: 0.2,
-        });
-      cy += 5;
+    const scanMsg = 'ESCANEAR PARA TRAZABILIDAD Y DETALLES DEL LOTE';
+    doc.font('Helvetica').fontSize(3.8).fillColor(MUTED);
+    const scanH = doc.heightOfString(scanMsg, {
+      width: innerW,
+      align: 'center',
+      lineGap: 1,
+    });
+    const barcodeSlotH = 13;
+    if (cy + scanH + 6 + barcodeSlotH <= footTop) {
+      doc.text(scanMsg, innerX, cy, {
+        width: innerW,
+        align: 'center',
+        lineGap: 1,
+      });
+      cy = doc.y + 6;
     }
 
     const bcW = Math.min(innerW - 6, 96);
     const minBcBottom = footTop - 0.5;
-    if (cy + 12 <= minBcBottom) {
+    if (cy + barcodeSlotH <= minBcBottom) {
       try {
-        doc.image(barcodeBuffer, innerX + (innerW - bcW) / 2, cy, { width: bcW, height: 12 });
+        doc.image(barcodeBuffer, innerX + (innerW - bcW) / 2, cy, { width: bcW, height: barcodeSlotH });
+        cy += barcodeSlotH + 2;
       } catch {
         doc.font('Helvetica').fontSize(5).fillColor(MUTED).text(ctx.lotCode, innerX, cy, {
           width: innerW,
           align: 'center',
         });
+        cy = doc.y + TEXT_AFTER_GAP;
       }
-      cy += 14;
     }
 
     const prod = this.truncate(ctx.productDescriptor, 52);
