@@ -4,7 +4,9 @@ export default () => ({
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:4200',
   labelLogoUrl: process.env.LABEL_LOGO_URL?.trim() || '',
   labelBrandName: process.env.LABEL_BRAND_NAME?.trim() || '',
-  /** Full landing header; when empty, title is built from `labelBrandName` + " Supply Tracking". */
+  /** Overrides landing toolbar text only (e.g. MAREA ALTA). When empty, uses LABEL_BRAND_NAME uppercased. */
+  publicLandingTitle: process.env.PUBLIC_LANDING_TITLE?.trim() || '',
+  /** Legacy: overrides landing toolbar when PUBLIC_LANDING_TITLE is unset. Prefer PUBLIC_LANDING_TITLE. */
   publicHeaderTitle: process.env.PUBLIC_HEADER_TITLE?.trim() || '',
   database: {
     url: process.env.DATABASE_URL,
