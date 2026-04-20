@@ -29,6 +29,7 @@ import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import { PatchPublicVisibilityDto } from './dto/patch-public-visibility.dto';
 import { LotListQueryDto } from './dto/lot-list-query.dto';
+import { SuggestLotCodeQueryDto } from './dto/suggest-lot-code.query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -73,6 +74,19 @@ export class LotsController {
   @ApiQuery({ name: 'limit', required: false })
   findAll(@Query() query: LotListQueryDto) {
     return this.lotsService.findAll(query);
+  }
+
+  @Get('suggest-lot-code')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Suggest next lot code for a product',
+    description:
+      'Returns the next canonical lot code for the given product, pool, harvest date, presentation, and packaging (first free `P{n}-{MMYY}-…` or `…-NN` suffix).',
+  })
+  @ApiResponse({ status: 200, description: 'Suggested lot code' })
+  @ApiResponse({ status: 404, description: 'Product not found' })
+  suggestLotCode(@Query() query: SuggestLotCodeQueryDto) {
+    return this.lotsService.suggestNextLotCode(query);
   }
 
   // ── Static `code/*` routes before `:id` so "code" is not captured as an id ──

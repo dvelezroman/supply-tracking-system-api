@@ -26,6 +26,17 @@ export class LotsRepository {
     return this.prisma.lot.findUnique({ where: { lotCode }, include: LOT_INCLUDES });
   }
 
+  /** Lot codes for a product that match the canonical base or `base-*` suffix variants. */
+  findLotCodesByProductAndBase(productId: string, base: string) {
+    return this.prisma.lot.findMany({
+      where: {
+        productId,
+        OR: [{ lotCode: base }, { lotCode: { startsWith: `${base}-` } }],
+      },
+      select: { lotCode: true },
+    });
+  }
+
   findAll(params: {
     skip?: number;
     take?: number;

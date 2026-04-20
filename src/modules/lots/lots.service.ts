@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { Prisma, Presentation, Packaging } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LotsRepository } from './lots.repository';
 import { CreateLotDto } from './dto/create-lot.dto';
@@ -17,6 +17,11 @@ import {
   mergeVisibilityPatch,
   resolveVisibility,
 } from '../../common/public-visibility/public-visibility';
+import {
+  buildLotCodeBase,
+  nextLotCodeForProduct,
+} from './lot-code.generator';
+import type { SuggestLotCodeQueryDto } from './dto/suggest-lot-code.query.dto';
 
 @Injectable()
 export class LotsService {
@@ -34,26 +39,79 @@ export class LotsService {
     return `${trimmed}/trace/${encodeURIComponent(lotCode)}`;
   }
 
+  async suggestNextLotCode(query: SuggestLotCodeQueryDto): Promise<{ lotCode: string }> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: query.productId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const lotCode = await this.resolveNextLotCodeForProduct(query);
+    return { lotCode };
+  }
+
+  private async resolveNextLotCodeForProduct(params: {
+    productId: string;
+    poolNumber: number;
+    harvestDate: string;
+    presentation: Presentation;
+    packaging: Packaging;
+  }): Promise<string> {
+    const base = buildLotCodeBase(
+      params.poolNumber,
+      params.harvestDate,
+      params.presentation,
+      params.packaging,
+    );
+    const rows = await this.lotsRepository.findLotCodesByProductAndBase(
+      params.productId,
+      base,
+    );
+    const codes = rows.map((r) => r.lotCode);
+    return nextLotCodeForProduct(base, codes);
+  }
+
   async create(dto: CreateLotDto) {
-    const existing = await this.lotsRepository.findByLotCode(dto.lotCode);
+    const trimmedCode = dto.lotCode?.trim();
+    const lotCode =
+      trimmedCode ||
+      (await this.resolveNextLotCodeForProduct({
+        productId: dto.productId,
+        poolNumber: dto.poolNumber,
+        harvestDate: dto.harvestDate,
+        presentation: dto.presentation,
+        packaging: dto.packaging,
+      }));
+
+    const existing = await this.lotsRepository.findByLotCode(lotCode);
     if (existing) {
-      throw new ConflictException(`Lot code '${dto.lotCode}' already exists`);
+      throw new ConflictException(`Lot code '${lotCode}' already exists`);
     }
 
-    const { productId, farmId, labId, maturationId, coPackerId, harvestDate, ...rest } =
-      dto;
+    const {
+      productId,
+      farmId,
+      labId,
+      maturationId,
+      coPackerId,
+      harvestDate,
+      lotCode: _dtoLotCode,
+      ...rest
+    } = dto;
 
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
       select: { publicVisibilityDefaults: true },
     });
+    if (!product) throw new NotFoundException('Product not found');
     const publicVisibility = resolveVisibility(product?.publicVisibilityDefaults);
 
-    const publicTraceUrl = this.buildPublicTraceUrl(dto.lotCode);
+    const publicTraceUrl = this.buildPublicTraceUrl(lotCode);
     const qrCodeDataUrl = await this.qrService.generateDataUrl(publicTraceUrl);
 
     return this.lotsRepository.create({
       ...rest,
+      lotCode,
       harvestDate: new Date(harvestDate),
       publicTraceUrl,
       qrCodeDataUrl,

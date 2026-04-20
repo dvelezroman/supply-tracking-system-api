@@ -10,7 +10,9 @@ import {
   IsOptional,
   IsArray,
   Matches,
+  ValidateIf,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import {
   Presentation,
   Packaging,
@@ -19,15 +21,25 @@ import {
 } from '@prisma/client';
 
 export class CreateLotDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'P2-0226-PD-IQF-A',
-    description: 'Canonical lot code: P{pool}-{MMYY}-{presentation}-{packaging}[-suffix]',
+    description:
+      'Canonical lot code: P{pool}-{MMYY}-{presentation}-{packaging}[-suffix]. Omit or leave blank to auto-assign the next free code for this product (same pool / harvest month-year / presentation / packaging).',
   })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    return typeof value === 'string' ? value.trim() : value;
+  })
+  @IsOptional()
+  @ValidateIf(
+    (o) => o.lotCode !== undefined && o.lotCode !== null && String(o.lotCode).trim() !== '',
+  )
   @IsString()
   @Matches(/^P\d+-\d{4}-[A-Z]+-[A-Z]+(-[A-Z0-9]+)?$/, {
     message: 'lotCode must follow format: P{pool}-{MMYY}-{PRESENTATION}-{PACKAGING}',
   })
-  lotCode: string;
+  lotCode?: string;
 
   @ApiProperty({ example: 'uuid-of-product' })
   @IsUUID()
