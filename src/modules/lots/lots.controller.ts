@@ -138,18 +138,18 @@ export class LotsController {
   @Get('code/:lotCode/qr/pdf')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({
-    summary: 'Generate a PDF sheet of packaging-style traceability labels for a lot',
-    description: `Returns a printable A4 PDF with up to ${QR_PER_PAGE} labels per page (5×5 grid): brand/logo, production lot, Code 128 barcode, camera-friendly QR (public trace URL), product and origin lines, net weight. Default copies=${QR_PER_PAGE}. Max ${MAX_COPIES} per request. Configure LABEL_LOGO_URL and LABEL_BRAND_NAME on the API.`,
+    summary: 'Generate 10x8cm packaging labels (A4 grid) for a lot',
+    description: `Returns a printable A4 PDF with labels sized 10cm width x 8cm height (up to ${QR_PER_PAGE} labels per page), arranged in the layout that fits the most labels per sheet: brand/logo, lot code, Code 128 barcode, QR (public trace URL), origin line, and net weight. Default copies=${QR_PER_PAGE}. Max ${MAX_COPIES} per request. Configure LABEL_LOGO_URL and LABEL_BRAND_NAME on the API.`,
   })
   @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
   @ApiQuery({
     name: 'copies',
     required: false,
-    description: `Number of labels to generate (default: ${QR_PER_PAGE}, max: ${MAX_COPIES})`,
-    example: 25,
+    description: `Number of 10cm (width) x 8cm (height) labels to generate (default: ${QR_PER_PAGE}, max: ${MAX_COPIES})`,
+    example: 4,
   })
   @ApiProduces('application/pdf')
-  @ApiResponse({ status: 200, description: 'PDF file with packaging label grid' })
+  @ApiResponse({ status: 200, description: 'PDF file with 8cm x 10cm labels arranged on A4 pages' })
   @ApiResponse({ status: 400, description: 'copies must be between 1 and 500' })
   @ApiResponse({ status: 404, description: 'Lot not found' })
   async getQrPdf(

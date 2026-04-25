@@ -2,25 +2,57 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as PDFDocument from 'pdfkit';
 import { QrService } from './qr.service';
+import sharp from 'sharp';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 type BwipJsNode = { toBuffer(opts: Record<string, unknown>): Promise<Buffer> };
 
-// ── A4 (pt) ─────────────────────────────────────────────────────────────────
-const PAGE_WIDTH = 595.28;
-const PAGE_HEIGHT = 841.89;
-const MARGIN = 22;
-const HEADER_H = 18;
-const GUTTER = 2;
+const CM_TO_PT = 28.3464567;
+const A4_PORTRAIT_W = 595.28;
+const A4_PORTRAIT_H = 841.89;
+const MARGIN = 20;
+const GUTTER = 8;
+/** Fixed physical label size: 10cm width x 8cm height. */
+const LABEL_W = 10 * CM_TO_PT;
+const LABEL_H = 8 * CM_TO_PT;
 
-/** 5×5 packaging labels per sheet (25 per A4 page). */
-const COLS = 5;
-const ROWS = 5;
-export const QR_PER_PAGE = COLS * ROWS;
+type PageLayout = {
+  pageW: number;
+  pageH: number;
+  cols: number;
+  rows: number;
+  gridW: number;
+  gridH: number;
+  startX: number;
+  startY: number;
+  capacity: number;
+};
 
-const TOTAL_W = PAGE_WIDTH - MARGIN * 2;
-const TOTAL_H = PAGE_HEIGHT - MARGIN * 2 - HEADER_H;
-const CELL_W = (TOTAL_W - GUTTER * (COLS - 1)) / COLS;
-const CELL_H = (TOTAL_H - GUTTER * (ROWS - 1)) / ROWS;
+const computeLayout = (pageW: number, pageH: number): PageLayout => {
+  const cols = Math.max(1, Math.floor((pageW - MARGIN * 2 + GUTTER) / (LABEL_W + GUTTER)));
+  const rows = Math.max(1, Math.floor((pageH - MARGIN * 2 + GUTTER) / (LABEL_H + GUTTER)));
+  const gridW = cols * LABEL_W + (cols - 1) * GUTTER;
+  const gridH = rows * LABEL_H + (rows - 1) * GUTTER;
+  return {
+    pageW,
+    pageH,
+    cols,
+    rows,
+    gridW,
+    gridH,
+    startX: (pageW - gridW) / 2,
+    startY: (pageH - gridH) / 2,
+    capacity: cols * rows,
+  };
+};
+
+const PORTRAIT_LAYOUT = computeLayout(A4_PORTRAIT_W, A4_PORTRAIT_H);
+const LANDSCAPE_LAYOUT = computeLayout(A4_PORTRAIT_H, A4_PORTRAIT_W);
+const PAGE_LAYOUT =
+  LANDSCAPE_LAYOUT.capacity > PORTRAIT_LAYOUT.capacity ? LANDSCAPE_LAYOUT : PORTRAIT_LAYOUT;
+
+export const QR_PER_PAGE = PAGE_LAYOUT.capacity;
 
 /** Fondo blanco y borde fino (estilo etiqueta clásica / exportación). */
 const PANEL_BG = '#FFFFFF';
@@ -30,12 +62,9 @@ const MUTED = '#333333';
 /** Marca / títulos en azul corporativo (legible en blanco y negro). */
 const BRAND = '#1a237e';
 
-/** ~24mm at print scale; do not shrink without re-validating phone scans. */
-const QR_DRAW = 70;
-const INNER_PAD = 5;
-/** Espacio bajo el QR: texto de escaneo (puede ser 2 líneas) + aire + código de barras. */
-const BELOW_QR_RESERVE = 30;
-const TEXT_AFTER_GAP = 3;
+/** ~35mm at print scale. */
+const QR_DRAW = 100;
+const INNER_PAD = 0;
 
 export interface QrPdfOptions {
   lotCode: string;
@@ -58,15 +87,22 @@ export class PdfService {
 
   async generateQrPdf(url: string, opts: QrPdfOptions): Promise<Buffer> {
     const logoSource = opts.logoUrl ?? this.configService.get<string>('labelLogoUrl') ?? '';
-    const [qrBuffer, barcodeBuffer, logoBuffer] = await Promise.all([
+    const bitflowLogoSource = this.configService.get<string>('bitflowLogoUrl') ?? '';
+    const bitflowSiteUrl = this.configService.get<string>('bitflowSiteUrl')?.trim() || 'bitflow.bid';
+    const [qrBuffer, barcodeBuffer, logoBuffer, bitflowLogoBuffer] = await Promise.all([
       this.qrService.generatePngForPdfLabel(url),
       this.buildBarcode(opts.lotCode),
       this.fetchLogo(logoSource),
+      this.fetchLogo(bitflowLogoSource),
     ]);
 
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      const doc = new PDFDocument({ size: 'A4', margin: 0, autoFirstPage: true });
+      const doc = new PDFDocument({
+        size: [PAGE_LAYOUT.pageW, PAGE_LAYOUT.pageH],
+        margin: 0,
+        autoFirstPage: true,
+      });
 
       doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -75,40 +111,22 @@ export class PdfService {
       for (let i = 0; i < opts.copies; i++) {
         const posOnPage = i % QR_PER_PAGE;
         if (i > 0 && posOnPage === 0) doc.addPage();
-        if (posOnPage === 0) this.renderPageHeader(doc, opts);
-        const col = posOnPage % COLS;
-        const row = Math.floor(posOnPage / COLS);
-        const cellX = MARGIN + col * (CELL_W + GUTTER);
-        const cellY = MARGIN + HEADER_H + row * (CELL_H + GUTTER);
-        this.renderPackagingLabel(doc, cellX, cellY, CELL_W, CELL_H, {
+        const col = posOnPage % PAGE_LAYOUT.cols;
+        const row = Math.floor(posOnPage / PAGE_LAYOUT.cols);
+        const x = PAGE_LAYOUT.startX + col * (LABEL_W + GUTTER);
+        const y = PAGE_LAYOUT.startY + row * (LABEL_H + GUTTER);
+        this.renderPackagingLabel(doc, x, y, LABEL_W, LABEL_H, {
           ...opts,
           qrBuffer,
           barcodeBuffer,
           logoBuffer,
+          bitflowLogoBuffer,
+          bitflowSiteUrl,
         });
       }
 
       doc.end();
     });
-  }
-
-  private renderPageHeader(doc: PDFKit.PDFDocument, opts: QrPdfOptions): void {
-    doc
-      .font('Helvetica')
-      .fontSize(6)
-      .fillColor('#6B6B6B')
-      .text(
-        `Lote ${opts.lotCode} · ${opts.copies} etiqueta(s) · Imprimir a tamaño real (100 %) para un QR legible.`,
-        MARGIN,
-        MARGIN,
-        { width: PAGE_WIDTH - MARGIN * 2, align: 'center' },
-      );
-    doc
-      .moveTo(MARGIN, MARGIN + 11)
-      .lineTo(PAGE_WIDTH - MARGIN, MARGIN + 11)
-      .strokeColor('#D0D0D0')
-      .lineWidth(0.35)
-      .stroke();
   }
 
   private renderPackagingLabel(
@@ -121,136 +139,211 @@ export class PdfService {
       qrBuffer: Buffer;
       barcodeBuffer: Buffer;
       logoBuffer: Buffer | null;
+      bitflowLogoBuffer: Buffer | null;
+      bitflowSiteUrl: string;
     },
   ): void {
-    const { qrBuffer, barcodeBuffer, logoBuffer } = ctx;
+    const { qrBuffer, barcodeBuffer, logoBuffer, bitflowLogoBuffer } = ctx;
     const innerX = cellX + INNER_PAD;
     const innerY = cellY + INNER_PAD;
     const innerW = cellW - INNER_PAD * 2;
     const innerH = cellH - INNER_PAD * 2;
+    const leftW = Math.floor(innerW * 0.42);
+    const gap = 7;
+    const leftX = innerX + 6;
+    const leftInnerW = leftW - 12;
+    const rightX = leftX + leftW + gap;
+    const rightW = innerW - leftW - gap - 6;
 
-    doc.roundedRect(cellX, cellY, cellW, cellH, 2).fill(PANEL_BG);
+    doc.roundedRect(cellX, cellY, cellW, cellH, 3).fill(PANEL_BG);
     doc
-      .roundedRect(cellX, cellY, cellW, cellH, 2)
+      .roundedRect(cellX, cellY, cellW, cellH, 3)
       .strokeColor(BORDER_COLOR)
-      .lineWidth(0.55)
+      .lineWidth(0.75)
       .stroke();
 
-    const footTop = innerY + innerH - 18;
-    let cy = innerY + 2;
+    const headerX = innerX + 6;
+    const headerW = innerW - 12;
+    let headerY = innerY + 6;
+    doc.font('Helvetica-Bold').fontSize(5.6).fillColor(MUTED).text('PRODUCTO', headerX, headerY, {
+      width: headerW,
+      align: 'center',
+    });
+    headerY = doc.y + 1;
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9.8)
+      .fillColor(TEXT)
+      .text(this.truncate(ctx.productDescriptor, 52), headerX, headerY, {
+      width: headerW,
+      align: 'center',
+      lineGap: 0.8,
+    });
+    const contentStartY = doc.y + 10;
+
+    let leftY = contentStartY;
+    let rightY = contentStartY;
     const brandName = ctx.brandName.toUpperCase();
-    const maxLogoW = Math.min(68, innerW - 8);
+    const maxLogoW = Math.min(132, rightW);
+
+    // Left rail: helper text + QR + barcode.
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(6.7)
+      .fillColor(TEXT)
+      .text('ESCANEA MI TRAZABILIDAD', leftX, leftY, {
+        width: leftInnerW,
+        align: 'center',
+        lineGap: 0.5,
+      });
+    leftY = doc.y + 4;
+
+    const qrDraw = Math.min(QR_DRAW, leftInnerW - 2);
+    const qrX = leftX + (leftInnerW - qrDraw) / 2;
+    doc.rect(qrX - 1, leftY - 1, qrDraw + 2, qrDraw + 2).strokeColor(BORDER_COLOR).lineWidth(0.45).stroke();
+    doc.image(qrBuffer, qrX, leftY, { width: qrDraw, height: qrDraw });
+    leftY += qrDraw + 5;
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(5.8)
+      .fillColor(TEXT)
+      .text('LOTE', leftX, leftY, {
+        width: leftInnerW,
+        align: 'center',
+        lineGap: 0.5,
+      });
+    leftY = doc.y + 1;
+
+    doc.font('Helvetica-Bold').fontSize(8.9).fillColor(TEXT).text(ctx.lotCode, leftX, leftY, {
+      width: leftInnerW,
+      align: 'center',
+      lineGap: 0.6,
+    });
+    leftY = doc.y + 6;
+
+    try {
+      doc.image(barcodeBuffer, leftX, leftY, { fit: [leftInnerW, 34], align: 'center' });
+    } catch {
+      doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(ctx.lotCode, leftX, leftY + 9, {
+        width: leftInnerW,
+        align: 'center',
+      });
+    }
 
     if (logoBuffer) {
       try {
-        const lx = innerX + (innerW - maxLogoW) / 2;
-        doc.image(logoBuffer, lx, cy, { fit: [maxLogoW, 12], align: 'center', valign: 'center' });
-        cy += 14;
+        doc.image(logoBuffer, rightX + (rightW - maxLogoW) / 2, rightY, {
+          fit: [maxLogoW, 42],
+          align: 'center',
+          valign: 'center',
+        });
+        rightY += 44;
       } catch {
-        this.drawLogoPlaceholder(doc, innerX + innerW / 2, cy + 5, maxLogoW);
-        cy += 14;
+        this.drawLogoPlaceholder(doc, rightX + rightW / 2, rightY + 6, maxLogoW);
+        rightY += 20;
       }
     } else {
-      this.drawLogoPlaceholder(doc, innerX + innerW / 2, cy + 5, maxLogoW);
-      cy += 14;
+      this.drawLogoPlaceholder(doc, rightX + rightW / 2, rightY + 6, maxLogoW);
+      rightY += 20;
     }
 
     doc
       .font('Helvetica-Bold')
-      .fontSize(6.6)
+      .fontSize(10.8)
       .fillColor(BRAND)
-      .text(brandName, innerX, cy, { width: innerW, align: 'center', characterSpacing: 0.35, lineGap: 1 });
-    cy = doc.y + TEXT_AFTER_GAP;
+      .text(brandName, rightX, rightY, {
+        width: rightW,
+        align: 'center',
+        characterSpacing: 0.35,
+        lineGap: 0.8,
+      });
+    rightY = doc.y + 2;
 
     doc
       .font('Helvetica-Bold')
-      .fontSize(4.5)
+      .fontSize(5.9)
       .fillColor(TEXT)
-      .text('LOTE DE PRODUCCIÓN', innerX, cy, {
-        width: innerW,
+      .text('CONFIANZA TOTAL EN CADA ORIGEN', rightX, rightY, {
+        width: rightW,
         align: 'center',
-        lineGap: 0.5,
+        lineGap: 0.7,
       });
-    cy = doc.y + TEXT_AFTER_GAP;
+    rightY = doc.y + 3;
 
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(7.2)
-      .fillColor(TEXT)
-      .text(ctx.lotCode, innerX, cy, {
-        width: innerW,
-        align: 'center',
-        lineGap: 0.5,
-      });
-    cy = doc.y + TEXT_AFTER_GAP;
+    doc.font('Helvetica-Bold').fontSize(5.8).fillColor(TEXT).text('Sociedad Jaramillo Minaya', rightX, rightY, {
+      width: rightW,
+      align: 'center',
+      lineGap: 0.6,
+    });
+    rightY = doc.y + 1;
 
-    /** QR primero (más visible al escanear), código de barras debajo — layout clásico de etiqueta. */
-    const minQrTop = footTop - QR_DRAW - BELOW_QR_RESERVE;
-    if (cy > minQrTop) cy = minQrTop;
+    doc.font('Helvetica').fontSize(5.6).fillColor(MUTED).text('El Oro, Ecuador', rightX, rightY, {
+      width: rightW,
+      align: 'center',
+      lineGap: 0.6,
+    });
+    rightY = doc.y + 14;
 
-    const qrX = innerX + (innerW - QR_DRAW) / 2;
-    doc.rect(qrX - 1, cy - 1, QR_DRAW + 2, QR_DRAW + 2).strokeColor(BORDER_COLOR).lineWidth(0.35).stroke();
-    doc.image(qrBuffer, qrX, cy, { width: QR_DRAW, height: QR_DRAW });
-    cy += QR_DRAW + 5;
-
-    const scanMsg = 'ESCANEAR PARA TRAZABILIDAD Y DETALLES DEL LOTE';
-    doc.font('Helvetica').fontSize(3.8).fillColor(MUTED);
-    const scanH = doc.heightOfString(scanMsg, {
-      width: innerW,
+    const origin = this.truncate(ctx.originLine || '—', 70);
+    doc.font('Helvetica').fontSize(6.2).fillColor(MUTED).text(origin, rightX, rightY, {
+      width: rightW,
       align: 'center',
       lineGap: 1,
     });
-    const barcodeSlotH = 13;
-    if (cy + scanH + 6 + barcodeSlotH <= footTop) {
-      doc.text(scanMsg, innerX, cy, {
-        width: innerW,
-        align: 'center',
-        lineGap: 1,
-      });
-      cy = doc.y + 6;
-    }
-
-    const bcW = Math.min(innerW - 6, 96);
-    const minBcBottom = footTop - 0.5;
-    if (cy + barcodeSlotH <= minBcBottom) {
-      try {
-        doc.image(barcodeBuffer, innerX + (innerW - bcW) / 2, cy, { width: bcW, height: barcodeSlotH });
-        cy += barcodeSlotH + 2;
-      } catch {
-        doc.font('Helvetica').fontSize(5).fillColor(MUTED).text(ctx.lotCode, innerX, cy, {
-          width: innerW,
-          align: 'center',
-        });
-        cy = doc.y + TEXT_AFTER_GAP;
-      }
-    }
-
-    const prod = this.truncate(ctx.productDescriptor, 52);
-    doc.font('Helvetica').fontSize(4.7).fillColor(TEXT).text(prod, innerX, footTop, {
-      width: innerW,
-      align: 'center',
-    });
-
-    const origin = this.truncate(ctx.originLine || '—', 54);
-    doc.font('Helvetica').fontSize(4.2).fillColor(MUTED).text(origin, innerX, footTop + 5.5, {
-      width: innerW,
-      align: 'center',
-    });
+    rightY = doc.y + 5;
 
     const wStr = Number.isInteger(ctx.netWeightKg)
       ? `${ctx.netWeightKg}`
       : ctx.netWeightKg.toFixed(2).replace(/\.?0+$/, '');
     doc
       .font('Helvetica-Bold')
-      .fontSize(4.9)
+      .fontSize(8)
       .fillColor(TEXT)
-      .text(`PESO NETO: ${wStr} KG`, innerX, footTop + 11, { width: innerW, align: 'center' });
+      .text(`PESO NETO: ${wStr} KG`, rightX, rightY, {
+        width: rightW,
+        align: 'center',
+      });
+
+    const footerY = innerY + innerH - 20;
+    const footerW = innerW - 12;
+    const footerX = innerX + 6;
+    doc.moveTo(footerX, footerY - 3).lineTo(footerX + footerW, footerY - 3).strokeColor('#D0D0D0').lineWidth(0.35).stroke();
+
+    if (bitflowLogoBuffer) {
+      try {
+        const logoW = 24;
+        const logoX = footerX + (footerW - logoW) / 2;
+        doc.image(bitflowLogoBuffer, logoX, footerY, { fit: [logoW, 8], align: 'center', valign: 'center' });
+      } catch {
+        doc.font('Helvetica-Bold').fontSize(5).fillColor(MUTED).text('BITFLOW', footerX, footerY + 1.5, {
+          width: footerW,
+          align: 'center',
+        });
+      }
+    } else {
+      doc.font('Helvetica-Bold').fontSize(5).fillColor(MUTED).text('BITFLOW', footerX, footerY + 1.5, {
+        width: footerW,
+        align: 'center',
+      });
+    }
+
+    doc.font('Helvetica').fontSize(4.4).fillColor(MUTED).text(this.cleanDisplayUrl(ctx.bitflowSiteUrl), footerX, footerY + 9, {
+      width: footerW,
+      align: 'center',
+    });
   }
 
   private truncate(s: string, max: number): string {
     const t = s.trim();
     if (t.length <= max) return t;
     return `${t.slice(0, max - 1)}…`;
+  }
+
+  private cleanDisplayUrl(input: string): string {
+    const trimmed = input.trim();
+    if (!trimmed) return 'bitflow.bid';
+    return trimmed.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
   }
 
   private drawLogoPlaceholder(doc: PDFKit.PDFDocument, centerX: number, centerY: number, maxW: number): void {
@@ -267,7 +360,10 @@ export class PdfService {
 
   private async fetchLogo(url?: string): Promise<Buffer | null> {
     const u = url?.trim();
-    if (!u || !/^https?:\/\//i.test(u)) return null;
+    if (!u) return null;
+    if (!/^https?:\/\//i.test(u)) {
+      return this.loadLogoFromFile(u);
+    }
     try {
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), 10000);
@@ -276,9 +372,41 @@ export class PdfService {
       if (!res.ok) return null;
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length < 32 || buf.length > 8_000_000) return null;
-      return buf;
+      const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+      return this.normalizeLogoBuffer(buf, u, contentType);
     } catch (e) {
       this.logger.warn(`LABEL_LOGO_URL fetch failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  private async loadLogoFromFile(pathValue: string): Promise<Buffer | null> {
+    try {
+      const absolute = pathValue.startsWith('/') ? pathValue : resolve(process.cwd(), pathValue);
+      const buf = await readFile(absolute);
+      if (buf.length < 32 || buf.length > 8_000_000) return null;
+      return this.normalizeLogoBuffer(buf, absolute, '');
+    } catch (e) {
+      this.logger.warn(`LABEL_LOGO_URL local file load failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  private async normalizeLogoBuffer(
+    original: Buffer,
+    sourceUrl: string,
+    contentType: string,
+  ): Promise<Buffer | null> {
+    const ext = sourceUrl.split('?')[0]?.split('.').pop()?.toLowerCase() ?? '';
+    const startsAsSvg = original.subarray(0, 300).toString('utf8').toLowerCase().includes('<svg');
+    const isSvg = contentType.includes('image/svg') || ext === 'svg' || startsAsSvg;
+    if (!isSvg) return original;
+
+    try {
+      // PDFKit does not render SVG directly; convert once to PNG for stable label output.
+      return await sharp(original, { density: 300 }).png().toBuffer();
+    } catch (e) {
+      this.logger.warn(`LABEL_LOGO_URL svg conversion failed: ${(e as Error).message}`);
       return null;
     }
   }

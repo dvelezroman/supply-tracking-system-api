@@ -16,6 +16,8 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
+    "db:reset:no-seed": "prisma migrate reset --force --skip-seed",
+    "db:reset:seed": "prisma migrate reset --force --skip-seed && npm run prisma:seed",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -41,6 +43,7 @@
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.1",
     "rxjs": "^7.8.1",
+    "sharp": "^0.34.5",
     "swagger-ui-express": "^5.0.0"
   },
   "devDependencies": {
