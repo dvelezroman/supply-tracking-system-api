@@ -10,6 +10,7 @@ import { Request, Response } from 'express';
 
 /** Paths browsers often request on whatever host is open (e.g. API :3000) — not real API errors. */
 const BROWSER_PROBE_PATHS = new Set([
+  '/',
   '/sw.js',
   '/service-worker.js',
   '/worker.js',
