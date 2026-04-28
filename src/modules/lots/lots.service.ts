@@ -261,6 +261,48 @@ export class LotsService {
     });
   }
 
+  /**
+   * Hard-deletes all traceability events for the lot (including those soft-deleted
+   * per-event), then deletes restaurants linked only to this lot, then the lot.
+   * Restaurants that still supply other lots are kept; their link to this lot is removed
+   * on lot delete (DB cascade). Events must be removed before the lot (FK not CASCADE).
+   */
+  async remove(id: string) {
+    await this.findById(id);
+
+    const linked = await this.prisma.lotRestaurant.findMany({
+      where: { lotId: id },
+      select: { restaurantId: true },
+    });
+    const restaurantIds = [...new Set(linked.map((l) => l.restaurantId))];
+
+    let orphanRestaurantIds: string[] = [];
+    if (restaurantIds.length > 0) {
+      const otherLinks = await this.prisma.lotRestaurant.findMany({
+        where: {
+          lotId: { not: id },
+          restaurantId: { in: restaurantIds },
+        },
+        select: { restaurantId: true },
+      });
+      const withOtherLots = new Set(otherLinks.map((l) => l.restaurantId));
+      orphanRestaurantIds = restaurantIds.filter((rid) => !withOtherLots.has(rid));
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      // Hard-delete all traceability rows for this lot (including soft-deleted events:
+      // `deleteMany` does not filter on `deletedAt`; single-event deletes only set deletedAt).
+      await tx.traceabilityEvent.deleteMany({ where: { lotId: id } });
+      if (orphanRestaurantIds.length > 0) {
+        await tx.restaurant.deleteMany({
+          where: { id: { in: orphanRestaurantIds } },
+        });
+      }
+      await tx.lot.delete({ where: { id } });
+    });
+    return { id };
+  }
+
   async getHistory(lotCode: string) {
     const lot = await this.findByLotCode(lotCode);
     const events = await this.lotsRepository.findHistory(lot.id);

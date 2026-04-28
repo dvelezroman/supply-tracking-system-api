@@ -1,7 +1,12 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { TraceabilityRepository } from './traceability.repository';
 import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
 import { ListEventsQueryDto } from './dto/list-events-query.dto';
 import { LotsService } from '../lots/lots.service';
 import { ActorsService } from '../actors/actors.service';
@@ -30,6 +35,42 @@ export class TraceabilityService {
       actor: { connect: { id: actorId } },
     });
     return this.mapEventRow(created);
+  }
+
+  async findOne(id: string) {
+    const row = await this.traceabilityRepository.findByIdActive(id);
+    if (!row) throw new NotFoundException('Traceability event not found');
+    return this.mapEventRow(row);
+  }
+
+  async update(id: string, dto: UpdateEventDto) {
+    const existing = await this.traceabilityRepository.findByIdActive(id);
+    if (!existing) throw new NotFoundException('Traceability event not found');
+
+    const { actorId, eventType, location, notes, metadata, timestamp } = dto;
+    if (actorId) await this.actorsService.findById(actorId);
+
+    const data: Prisma.TraceabilityEventUpdateInput = {};
+    if (eventType !== undefined) data.eventType = eventType;
+    if (location !== undefined) data.location = location;
+    if (notes !== undefined) data.notes = notes;
+    if (metadata !== undefined) data.metadata = metadata as Prisma.InputJsonValue;
+    if (actorId !== undefined) data.actor = { connect: { id: actorId } };
+    if (timestamp !== undefined) data.timestamp = new Date(timestamp);
+
+    if (Object.keys(data).length === 0) {
+      return this.mapEventRow(existing);
+    }
+
+    const updated = await this.traceabilityRepository.updateById(id, data);
+    return this.mapEventRow(updated);
+  }
+
+  async softRemove(id: string) {
+    const existing = await this.traceabilityRepository.findByIdActive(id);
+    if (!existing) throw new NotFoundException('Traceability event not found');
+    await this.traceabilityRepository.softDelete(id);
+    return { id };
   }
 
   async findAll(query: ListEventsQueryDto) {
@@ -71,7 +112,9 @@ export class TraceabilityService {
   }
 
   private buildEventWhere(q: ListEventsQueryDto): Prisma.TraceabilityEventWhereInput {
-    const where: Prisma.TraceabilityEventWhereInput = {};
+    const where: Prisma.TraceabilityEventWhereInput = {
+      deletedAt: null,
+    };
 
     if (q.lotId) where.lotId = q.lotId;
 
@@ -117,6 +160,7 @@ export class TraceabilityService {
       notes: e.notes,
       metadata: e.metadata,
       timestamp: e.timestamp,
+      updatedAt: e.updatedAt,
       product: e.lot.product,
       actor: e.actor,
     };

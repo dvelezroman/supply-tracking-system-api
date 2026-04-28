@@ -57,10 +57,10 @@ export class LotsRepository {
     return this.prisma.lot.update({ where: { id }, data, include: LOT_INCLUDES });
   }
 
-  // Full event chain for a lot, ordered chronologically
+  // Full event chain for a lot, ordered chronologically (non-deleted only)
   findHistory(lotId: string) {
     return this.prisma.traceabilityEvent.findMany({
-      where: { lotId },
+      where: { lotId, deletedAt: null },
       include: { actor: true },
       orderBy: { timestamp: 'asc' },
     });

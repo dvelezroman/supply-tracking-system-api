@@ -247,6 +247,19 @@ export class LotsController {
     return this.lotsService.update(id, dto);
   }
 
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Delete a lot',
+    description:
+      'Hard-deletes all traceability events for this lot (including events previously soft-deleted), deletes only restaurants that were linked solely to this lot, then deletes the lot. Restaurant links to other lots are preserved.',
+  })
+  @ApiResponse({ status: 200, description: 'Lot deleted' })
+  @ApiResponse({ status: 404, description: 'Lot not found' })
+  remove(@Param('id') id: string) {
+    return this.lotsService.remove(id);
+  }
+
   private buildTraceUrl(lotCode: string): string {
     const base = this.configService.get<string>('frontendUrl') ?? 'http://localhost:4200';
     return `${base.replace(/\/$/, '')}/trace/${encodeURIComponent(lotCode)}`;

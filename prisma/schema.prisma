@@ -229,8 +229,7 @@ model LotRestaurant {
   @@map("lot_restaurants")
 }
 
-/// Append-only event log — never update or delete rows here.
-/// Each row is one checkpoint in the traceability chain of a Lot.
+/// Traceability chain for a lot. Rows may be **soft-deleted** (`deletedAt`) or **updated** in place; public and list APIs only return `deletedAt IS NULL`.
 model TraceabilityEvent {
   id        String    @id @default(uuid())
   lotId     String
@@ -247,9 +246,13 @@ model TraceabilityEvent {
   ///   STORED:          { chamberNumber, storageTemp }
   metadata  Json?
   timestamp DateTime  @default(now())
+  /// Soft delete: when set, event is hidden from trace timelines and listings (data retained).
+  deletedAt DateTime?
+  updatedAt DateTime  @updatedAt
 
   @@index([lotId])
   @@index([actorId])
   @@index([timestamp])
+  @@index([deletedAt])
   @@map("traceability_events")
 }

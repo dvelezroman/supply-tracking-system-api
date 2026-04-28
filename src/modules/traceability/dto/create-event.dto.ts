@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsEnum, IsOptional, IsObject, IsUUID } from 'class-validator';
+import {
+  IsString,
+  IsEnum,
+  IsOptional,
+  IsObject,
+  IsUUID,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 import { EventType } from '@prisma/client';
 
 export class CreateEventDto {
@@ -7,8 +15,11 @@ export class CreateEventDto {
   @IsUUID()
   lotId: string;
 
-  @ApiProperty({ example: 'uuid-of-actor' })
-  @IsUUID()
+  /** Same opaque string as `Actor.id` (UUID or stable seed id e.g. `seed-farm-001`). */
+  @ApiProperty({ example: 'seed-farm-001' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(191)
   actorId: string;
 
   @ApiProperty({ enum: EventType, example: EventType.SHIPPED })

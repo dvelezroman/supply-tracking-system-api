@@ -11,6 +11,8 @@ import {
   IsArray,
   Matches,
   ValidateIf,
+  MinLength,
+  MaxLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import {
@@ -96,19 +98,28 @@ export class CreateLotDto {
   @IsPositive()
   harvestWeightGrams: number;
 
-  @ApiProperty({ example: 'uuid-of-farm-actor' })
-  @IsUUID()
+  /** Actor primary keys are opaque strings (UUID from `@default(uuid())` or stable seed ids like `seed-farm-001`). */
+  @ApiProperty({ example: 'seed-farm-001' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(191)
   farmId: string;
 
-  @ApiProperty({ example: 'uuid-of-lab-actor' })
-  @IsUUID()
+  @ApiProperty({ example: 'seed-lab-001' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(191)
   labId: string;
 
-  @ApiProperty({ example: 'uuid-of-maturation-actor' })
-  @IsUUID()
+  @ApiProperty({ example: 'seed-maturation-001' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(191)
   maturationId: string;
 
-  @ApiProperty({ example: 'uuid-of-copacker-actor' })
-  @IsUUID()
+  @ApiProperty({ example: 'seed-copacker-001' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(191)
   coPackerId: string;
 }

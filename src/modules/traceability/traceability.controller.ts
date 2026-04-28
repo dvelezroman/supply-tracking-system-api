@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Query, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Query,
+  Param,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -8,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { TraceabilityService } from './traceability.service';
 import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
 import { ListEventsQueryDto } from './dto/list-events-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
@@ -20,10 +31,31 @@ export class TraceabilityController {
 
   @Post('events')
   @ApiOperation({ summary: 'Record a traceability event for a lot' })
-  @ApiResponse({ status: 201, description: 'Event recorded (append-only)' })
+  @ApiResponse({ status: 201, description: 'Event recorded' })
   @ApiResponse({ status: 404, description: 'Lot or actor not found' })
   recordEvent(@Body() dto: CreateEventDto) {
     return this.traceabilityService.recordEvent(dto);
+  }
+
+  @Get('events/:id')
+  @ApiOperation({ summary: 'Get a traceability event by id (non-deleted only)' })
+  @ApiResponse({ status: 404, description: 'Not found or soft-deleted' })
+  findOne(@Param('id') id: string) {
+    return this.traceabilityService.findOne(id);
+  }
+
+  @Patch('events/:id')
+  @ApiOperation({ summary: 'Update a traceability event (same lot; soft-deleted events cannot be edited)' })
+  @ApiResponse({ status: 404, description: 'Not found or soft-deleted' })
+  update(@Param('id') id: string, @Body() dto: UpdateEventDto) {
+    return this.traceabilityService.update(id, dto);
+  }
+
+  @Delete('events/:id')
+  @ApiOperation({ summary: 'Soft-delete a traceability event' })
+  @ApiResponse({ status: 404, description: 'Not found or already deleted' })
+  remove(@Param('id') id: string) {
+    return this.traceabilityService.softRemove(id);
   }
 
   @Get('events')
