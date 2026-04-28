@@ -19,8 +19,8 @@ import {
 import { ActorsService } from './actors.service';
 import { CreateActorDto } from './dto/create-actor.dto';
 import { UpdateActorDto } from './dto/update-actor.dto';
+import { ActorsQueryDto } from './dto/actors-query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('actors')
 @ApiBearerAuth('access-token')
@@ -41,8 +41,8 @@ export class ActorsController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiResponse({ status: 200, description: 'Paginated actor list' })
-  findAll(@Query() pagination: PaginationDto) {
-    return this.actorsService.findAll(pagination.page, pagination.limit);
+  findAll(@Query() query: ActorsQueryDto) {
+    return this.actorsService.findAll(query.page, query.limit);
   }
 
   @Get(':id')
