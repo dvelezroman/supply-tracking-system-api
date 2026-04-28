@@ -9,6 +9,7 @@ import { ActorsModule } from './modules/actors/actors.module';
 import { TraceabilityModule } from './modules/traceability/traceability.module';
 import { LotsModule } from './modules/lots/lots.module';
 import { PublicTraceModule } from './modules/public-trace/public-trace.module';
+import { RestaurantsModule } from './modules/restaurants/restaurants.module';
 import { HealthModule } from './modules/health/health.module';
 import { RolesGuard } from './common/guards/roles.guard';
 
@@ -26,6 +27,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     LotsModule,
     TraceabilityModule,
     PublicTraceModule,
+    RestaurantsModule,
     HealthModule,
   ],
   providers: [RolesGuard],

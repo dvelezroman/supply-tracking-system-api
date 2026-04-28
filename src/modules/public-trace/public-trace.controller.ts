@@ -9,6 +9,19 @@ import { SkipEnvelope } from '../../common/decorators/skip-envelope.decorator';
 export class PublicTraceController {
   constructor(private readonly publicTraceService: PublicTraceService) {}
 
+  @Get('restaurant/:slug')
+  @ApiOperation({
+    summary: 'Public trace by restaurant menu QR — no auth required',
+    description:
+      'Resolves the latest lot linked to this restaurant and returns the same payload as the lot trace, plus a restaurant object.',
+  })
+  @ApiParam({ name: 'slug', example: 'marea-alta-bistro' })
+  @ApiResponse({ status: 200, description: 'Trace for the current supply lot' })
+  @ApiResponse({ status: 404, description: 'Restaurant or linked lot not found' })
+  getTraceByRestaurant(@Param('slug') slug: string) {
+    return this.publicTraceService.getPublicTraceByRestaurantSlug(slug);
+  }
+
   @Get(':lotCode')
   @ApiOperation({
     summary: 'Public traceability lookup — no auth required',

@@ -4,6 +4,7 @@ import {
   Post,
   Put,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -28,6 +29,7 @@ import { LotsService } from './lots.service';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import { PatchPublicVisibilityDto } from './dto/patch-public-visibility.dto';
+import { LinkRestaurantDto } from './dto/link-restaurant.dto';
 import { LotListQueryDto } from './dto/lot-list-query.dto';
 import { SuggestLotCodeQueryDto } from './dto/suggest-lot-code.query.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -200,6 +202,33 @@ export class LotsController {
     @Body() body: PatchPublicVisibilityDto,
   ) {
     return this.lotsService.updatePublicVisibility(id, body.patch);
+  }
+
+  @Get(':id/restaurants')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'List restaurants linked to this lot' })
+  listRestaurantsOnLot(@Param('id') lotId: string) {
+    return this.lotsService.listRestaurantsOnLot(lotId);
+  }
+
+  @Post(':id/restaurants')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Link a restaurant to this lot (append history row)' })
+  addRestaurantToLot(
+    @Param('id') lotId: string,
+    @Body() body: LinkRestaurantDto,
+  ) {
+    return this.lotsService.addRestaurantToLot(lotId, body.restaurantId);
+  }
+
+  @Delete(':id/restaurants/:restaurantId')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Remove restaurant links to this lot' })
+  removeRestaurantFromLot(
+    @Param('id') lotId: string,
+    @Param('restaurantId') restaurantId: string,
+  ) {
+    return this.lotsService.removeRestaurantFromLot(lotId, restaurantId);
   }
 
   @Get(':id')

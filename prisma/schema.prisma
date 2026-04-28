@@ -181,12 +181,52 @@ model Lot {
   // ── Append-only event chain ───────────────────────────────────────────────
   events TraceabilityEvent[]
 
+  /// Restaurants linked to this lot (menu trace supply links).
+  lotRestaurants LotRestaurant[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([productId])
   @@index([harvestDate])
   @@map("lots")
+}
+
+/// A restaurant that displays a stable menu QR; resolves to the latest linked lot for public trace.
+model Restaurant {
+  id       String  @id @default(uuid())
+  name     String
+  location String?
+  contact  String?
+  /// URL segment for /trace/restaurant/:slug — unique, lowercase, hyphens.
+  slug     String  @unique
+
+  /// Full URL in the menu QR (FRONTEND_URL + /trace/restaurant/:slug).
+  publicMenuTraceUrl String
+  /// PNG data URL for menu cards; generated on create and when slug changes.
+  menuQrCodeDataUrl  String @db.Text
+
+  lotLinks LotRestaurant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("restaurants")
+}
+
+/// History of which lot supplies a restaurant’s menu trace (latest row wins for public QR).
+model LotRestaurant {
+  id            String   @id @default(uuid())
+  lotId         String
+  lot           Lot      @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  restaurantId  String
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@index([lotId])
+  @@index([restaurantId])
+  @@index([createdAt])
+  @@map("lot_restaurants")
 }
 
 /// Append-only event log — never update or delete rows here.

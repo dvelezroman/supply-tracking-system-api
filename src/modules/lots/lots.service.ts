@@ -4,9 +4,9 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, Presentation, Packaging } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
 import { LotsRepository } from './lots.repository';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
@@ -31,6 +31,58 @@ export class LotsService {
     private readonly configService: ConfigService,
     private readonly qrService: QrService,
   ) {}
+
+  async addRestaurantToLot(lotId: string, restaurantId: string) {
+    await this.findById(lotId);
+    const restaurant = await this.prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+    });
+    if (!restaurant) throw new NotFoundException('Restaurant not found');
+    return this.prisma.lotRestaurant.create({
+      data: { lotId, restaurantId },
+      include: {
+        restaurant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            publicMenuTraceUrl: true,
+            menuQrCodeDataUrl: true,
+          },
+        },
+      },
+    });
+  }
+
+  async listRestaurantsOnLot(lotId: string) {
+    await this.findById(lotId);
+    return this.prisma.lotRestaurant.findMany({
+      where: { lotId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        restaurant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            publicMenuTraceUrl: true,
+            menuQrCodeDataUrl: true,
+          },
+        },
+      },
+    });
+  }
+
+  async removeRestaurantFromLot(lotId: string, restaurantId: string) {
+    await this.findById(lotId);
+    const result = await this.prisma.lotRestaurant.deleteMany({
+      where: { lotId, restaurantId },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException('This restaurant is not linked to this lot');
+    }
+    return { deleted: result.count };
+  }
 
   private buildPublicTraceUrl(lotCode: string): string {
     const base =
