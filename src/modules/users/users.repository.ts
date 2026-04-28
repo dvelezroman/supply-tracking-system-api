@@ -40,4 +40,8 @@ export class UsersRepository {
   count() {
     return this.prisma.user.count();
   }
+
+  update(id: string, data: Prisma.UserUpdateInput) {
+    return this.prisma.user.update({ where: { id }, data });
+  }
 }
