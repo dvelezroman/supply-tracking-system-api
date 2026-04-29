@@ -1,10 +1,11 @@
 import {
   Injectable,
+  BadRequestException,
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
 import { UsersRepository } from './users.repository';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -92,6 +93,22 @@ export class UsersService {
 
     const updated = await this.usersRepository.update(id, data);
     return this.sanitize(updated);
+  }
+
+  async deleteUser(targetId: string, actorId: string): Promise<{ id: string }> {
+    if (targetId === actorId) {
+      throw new BadRequestException('Cannot delete your own account');
+    }
+
+    const user = await this.usersRepository.findById(targetId);
+    if (!user) throw new NotFoundException('User not found');
+
+    if (user.role === UserRole.ADMIN) {
+      throw new BadRequestException('Administrator accounts cannot be deleted');
+    }
+
+    const deleted = await this.usersRepository.delete(targetId);
+    return { id: deleted.id };
   }
 
   private sanitize(user: { password: string } & SafeUser): SafeUser {

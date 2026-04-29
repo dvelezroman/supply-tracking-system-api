@@ -1,12 +1,14 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -65,5 +67,20 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
   ) {
     return this.usersService.updateUser(id, dto);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete a user (admin)' })
+  @ApiResponse({ status: 200, description: 'User deleted' })
+  @ApiResponse({
+    status: 400,
+    description: 'Cannot delete self or administrator accounts',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.usersService.deleteUser(id, req.user.id);
   }
 }
