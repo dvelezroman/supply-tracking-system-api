@@ -430,6 +430,7 @@ async function main() {
           eventType: EventType.DELIVERED,
           actorKey: 'retailer',
           location: 'CD Retailer Quito',
+          metadata: { quantity: 40, unit: 'cajas' },
           offsetHours: 120,
         },
       ];
@@ -509,6 +510,7 @@ async function main() {
           eventType: EventType.DELIVERED,
           actorKey: 'retailer',
           location: 'Red de tiendas',
+          metadata: { quantity: 90, unit: 'cajas' },
           offsetHours: 110,
         },
       ];
@@ -583,6 +585,7 @@ async function main() {
         actorKey: 'retailer',
         location: 'Supermercados del Pacífico — CD',
         notes: 'Entrega a centro de distribución',
+        metadata: { quantity: 120, unit: 'cajas' },
         offsetHours: 96,
       },
     ];
@@ -758,6 +761,7 @@ async function main() {
         actorKey: 'retailer',
         location: 'Tiendas Manta / Quito — última milla',
         notes: 'Entrega completada; consumidor puede verificar QR del lote',
+        metadata: { quantity: 60, unit: 'cajas', channel: 'retail' },
         offsetHours: 112,
       },
     ];

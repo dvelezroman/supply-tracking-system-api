@@ -22,6 +22,7 @@ import {
   nextLotCodeForProduct,
 } from './lot-code.generator';
 import type { SuggestLotCodeQueryDto } from './dto/suggest-lot-code.query.dto';
+import { LotAvailabilityService } from './lot-availability.service';
 
 @Injectable()
 export class LotsService {
@@ -30,6 +31,7 @@ export class LotsService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly qrService: QrService,
+    private readonly lotAvailabilityService: LotAvailabilityService,
   ) {}
 
   async addRestaurantToLot(lotId: string, restaurantId: string) {
@@ -179,13 +181,15 @@ export class LotsService {
   async findById(id: string) {
     const lot = await this.lotsRepository.findById(id);
     if (!lot) throw new NotFoundException('Lot not found');
-    return lot;
+    const availability = await this.lotAvailabilityService.computeAvailability(id);
+    return { ...lot, availability };
   }
 
   async findByLotCode(lotCode: string) {
     const lot = await this.lotsRepository.findByLotCode(lotCode);
     if (!lot) throw new NotFoundException(`Lot '${lotCode}' not found`);
-    return lot;
+    const availability = await this.lotAvailabilityService.computeAvailability(lot.id);
+    return { ...lot, availability };
   }
 
   /**

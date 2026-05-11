@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { EventType, Prisma } from '@prisma/client';
 import { TraceabilityRepository } from './traceability.repository';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -11,6 +11,7 @@ import { ListEventsQueryDto } from './dto/list-events-query.dto';
 import { LotsService } from '../lots/lots.service';
 import { ActorsService } from '../actors/actors.service';
 import { ProductsService } from '../products/products.service';
+import { LotAvailabilityService } from '../lots/lot-availability.service';
 
 @Injectable()
 export class TraceabilityService {
@@ -19,6 +20,7 @@ export class TraceabilityService {
     private readonly lotsService: LotsService,
     private readonly actorsService: ActorsService,
     private readonly productsService: ProductsService,
+    private readonly lotAvailabilityService: LotAvailabilityService,
   ) {}
 
   async recordEvent(dto: CreateEventDto) {
@@ -27,6 +29,13 @@ export class TraceabilityService {
       this.lotsService.findById(dto.lotId),
       this.actorsService.findById(dto.actorId),
     ]);
+
+    if (dto.eventType === EventType.DELIVERED) {
+      await this.lotAvailabilityService.assertDeliveredWithinCapacity(
+        dto.lotId,
+        dto.metadata ?? undefined,
+      );
+    }
 
     const { lotId, actorId, ...rest } = dto;
     const created = await this.traceabilityRepository.create({
@@ -49,6 +58,19 @@ export class TraceabilityService {
 
     const { actorId, eventType, location, notes, metadata, timestamp } = dto;
     if (actorId) await this.actorsService.findById(actorId);
+
+    const nextType = dto.eventType ?? existing.eventType;
+    const nextMeta =
+      dto.metadata !== undefined
+        ? dto.metadata
+        : (existing.metadata as Record<string, unknown> | null);
+    if (nextType === EventType.DELIVERED) {
+      await this.lotAvailabilityService.assertDeliveredWithinCapacity(
+        existing.lotId,
+        nextMeta ?? undefined,
+        { excludeEventId: id },
+      );
+    }
 
     const data: Prisma.TraceabilityEventUpdateInput = {};
     if (eventType !== undefined) data.eventType = eventType;
