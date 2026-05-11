@@ -1,4 +1,11 @@
 import type { TraceabilityEvent } from '@prisma/client';
+import { EventType } from '@prisma/client';
+import type { LotAvailabilityComputed } from '../../modules/lots/lot-availability';
+import {
+  metadataRestaurantId,
+  roundKg,
+  sumDeliveredForRestaurant,
+} from '../../modules/lots/lot-availability';
 
 /** Keys admin can toggle for the public QR trace page. All default to true (fully open). */
 export const PUBLIC_VISIBILITY_KEYS = [
@@ -28,6 +35,7 @@ export const PUBLIC_VISIBILITY_KEYS = [
   'showEventActorType',
   'showEventMetadata',
   'showPublicQrBlock',
+  'showLotDeliveryTotals',
 ] as const;
 
 export type PublicVisibilityKey = (typeof PUBLIC_VISIBILITY_KEYS)[number];
@@ -98,6 +106,11 @@ export type PublicTraceLotPayload = {
     maturation: { name: string | null; location: string | null };
     coPacker: { name: string | null; location: string | null };
   };
+  deliveryTotals?: LotAvailabilityComputed | null;
+  venueDeliveryTotals?: {
+    deliveredWeightKg: number;
+    deliveredBoxUnits: number;
+  } | null;
 };
 
 export type PublicTraceEventPayload = {
@@ -108,6 +121,24 @@ export type PublicTraceEventPayload = {
   actor: { name: string; type: string | null; location: string | null };
   metadata: Record<string, unknown> | null;
 };
+
+export type BuildPublicTracePayloadOptions = {
+  mode?: 'lot-package' | 'restaurant';
+  restaurantId?: string;
+  deliveryTotals?: LotAvailabilityComputed | null;
+};
+
+function publicMetadataForEvent(
+  eventType: EventType,
+  raw: Record<string, unknown> | null | undefined,
+  showMeta: boolean,
+): Record<string, unknown> | null {
+  if (!showMeta) return null;
+  if (!raw) return null;
+  if (eventType !== EventType.DELIVERED) return raw;
+  const { restaurantId: _omit, ...rest } = raw;
+  return Object.keys(rest).length > 0 ? rest : null;
+}
 
 export function buildPublicTracePayload(
   lot: {
@@ -135,8 +166,10 @@ export function buildPublicTracePayload(
     }
   >,
   vis: Record<PublicVisibilityKey, boolean>,
+  options?: BuildPublicTracePayloadOptions,
 ): { lot: PublicTraceLotPayload; events: PublicTraceEventPayload[] } {
   const show = (k: PublicVisibilityKey) => vis[k] !== false;
+  const mode = options?.mode ?? 'lot-package';
 
   const lotOut: PublicTraceLotPayload = {
     lotCode: show('showLotCode') ? lot.lotCode : null,
@@ -176,11 +209,40 @@ export function buildPublicTracePayload(
     },
   };
 
+  if (mode === 'lot-package' && show('showLotDeliveryTotals') && options?.deliveryTotals) {
+    lotOut.deliveryTotals = options.deliveryTotals;
+  }
+
+  if (
+    mode === 'restaurant' &&
+    show('showLotDeliveryTotals') &&
+    options?.restaurantId
+  ) {
+    const v = sumDeliveredForRestaurant(
+      events,
+      options.restaurantId,
+      lot.weightKg,
+    );
+    lotOut.venueDeliveryTotals = {
+      deliveredWeightKg: roundKg(v.totalKg),
+      deliveredBoxUnits: roundKg(v.totalBoxUnits),
+    };
+  }
+
   if (!show('showTraceTimeline')) {
     return { lot: lotOut, events: [] };
   }
 
-  const eventsOut: PublicTraceEventPayload[] = events.map((e) => ({
+  const filtered =
+    mode === 'lot-package'
+      ? events.filter((e) => e.eventType !== EventType.DELIVERED)
+      : events.filter(
+          (e) =>
+            e.eventType !== EventType.DELIVERED ||
+            metadataRestaurantId(e.metadata) === options?.restaurantId,
+        );
+
+  const eventsOut: PublicTraceEventPayload[] = filtered.map((e) => ({
     eventType: e.eventType,
     timestamp: e.timestamp,
     location: show('showEventLocation') ? e.location : null,
@@ -190,9 +252,11 @@ export function buildPublicTracePayload(
       type: show('showEventActorType') ? e.actor.type : null,
       location: e.actor.location,
     },
-    metadata: show('showEventMetadata')
-      ? (e.metadata as Record<string, unknown> | null)
-      : null,
+    metadata: publicMetadataForEvent(
+      e.eventType,
+      e.metadata as Record<string, unknown> | null | undefined,
+      show('showEventMetadata'),
+    ),
   }));
 
   return { lot: lotOut, events: eventsOut };

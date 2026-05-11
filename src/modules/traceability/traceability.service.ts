@@ -12,6 +12,7 @@ import { LotsService } from '../lots/lots.service';
 import { ActorsService } from '../actors/actors.service';
 import { ProductsService } from '../products/products.service';
 import { LotAvailabilityService } from '../lots/lot-availability.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class TraceabilityService {
@@ -21,6 +22,7 @@ export class TraceabilityService {
     private readonly actorsService: ActorsService,
     private readonly productsService: ProductsService,
     private readonly lotAvailabilityService: LotAvailabilityService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async recordEvent(dto: CreateEventDto) {
@@ -35,6 +37,7 @@ export class TraceabilityService {
         dto.lotId,
         dto.metadata ?? undefined,
       );
+      await this.assertDeliveredRestaurantId(dto.metadata);
     }
 
     const { lotId, actorId, ...rest } = dto;
@@ -70,6 +73,7 @@ export class TraceabilityService {
         nextMeta ?? undefined,
         { excludeEventId: id },
       );
+      await this.assertDeliveredRestaurantId(nextMeta ?? undefined);
     }
 
     const data: Prisma.TraceabilityEventUpdateInput = {};
@@ -164,6 +168,24 @@ export class TraceabilityService {
     }
 
     return where;
+  }
+
+  /** Validates optional `metadata.restaurantId` when present on DELIVERED events. */
+  private async assertDeliveredRestaurantId(
+    metadata: Record<string, unknown> | null | undefined,
+  ): Promise<void> {
+    if (!metadata || typeof metadata !== 'object') return;
+    const rid = metadata['restaurantId'];
+    if (rid == null || rid === '') return;
+    if (typeof rid !== 'string') {
+      throw new BadRequestException('metadata.restaurantId must be a string UUID');
+    }
+    const row = await this.prisma.restaurant.findUnique({ where: { id: rid } });
+    if (!row) {
+      throw new BadRequestException(
+        'metadata.restaurantId does not match any restaurant',
+      );
+    }
   }
 
   private mapEventRow(

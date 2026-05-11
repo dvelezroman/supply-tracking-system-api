@@ -1,3 +1,5 @@
+import { EventType } from '@prisma/client';
+
 /** lb → kg (international avoirdupois pound) */
 export const LB_TO_KG = 0.45359237;
 
@@ -83,6 +85,29 @@ export function sumDeliveredLines(
     }
   }
   return { totalKg, totalBoxUnits };
+}
+
+/** Optional `metadata.restaurantId` on DELIVERED events (UUID string). */
+export function metadataRestaurantId(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const id = (metadata as Record<string, unknown>)['restaurantId'];
+  if (typeof id !== 'string') return null;
+  const t = id.trim();
+  return t.length > 0 ? t : null;
+}
+
+/** Sums kg/box-units only for DELIVERED rows tagged for a restaurant. */
+export function sumDeliveredForRestaurant(
+  events: { eventType: EventType; metadata: unknown }[],
+  restaurantId: string,
+  unitWeightKg: number,
+): { totalKg: number; totalBoxUnits: number } {
+  const subset = events.filter(
+    (e) =>
+      e.eventType === EventType.DELIVERED &&
+      metadataRestaurantId(e.metadata) === restaurantId,
+  );
+  return sumDeliveredLines(subset, unitWeightKg);
 }
 
 export function roundKg(n: number): number {
