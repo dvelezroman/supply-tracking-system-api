@@ -40,9 +40,10 @@ export class TraceabilityService {
       await this.assertDeliveredRestaurantId(dto.metadata);
     }
 
-    const { lotId, actorId, ...rest } = dto;
+    const { lotId, actorId, timestamp, ...rest } = dto;
     const created = await this.traceabilityRepository.create({
       ...rest,
+      ...(timestamp !== undefined ? { timestamp: new Date(timestamp) } : {}),
       lot: { connect: { id: lotId } },
       actor: { connect: { id: actorId } },
     });

@@ -11,6 +11,7 @@ import {
   UseGuards,
   Res,
   ParseIntPipe,
+  ParseBoolPipe,
   DefaultValuePipe,
   BadRequestException,
 } from '@nestjs/common';
@@ -37,6 +38,14 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { QrService } from '../../common/services/qr.service';
 import { PdfService, QR_PER_PAGE } from '../../common/services/pdf.service';
+import {
+  RetailLabelPdfService,
+  RetailLabelSides,
+} from '../../common/services/retail-label-pdf.service';
+import {
+  checkRetailLabelReadiness,
+  type RetailLabelEnvDefaults,
+} from '../../common/label/retail-label.resolve';
 import { ConfigService } from '@nestjs/config';
 
 const MAX_COPIES = 500;
@@ -49,6 +58,7 @@ export class LotsController {
     private readonly lotsService: LotsService,
     private readonly qrService: QrService,
     private readonly pdfService: PdfService,
+    private readonly retailLabelPdfService: RetailLabelPdfService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -187,6 +197,119 @@ export class LotsController {
     res.send(pdf);
   }
 
+  @Get('code/:lotCode/retail-label/readiness')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Check if retail label PDF can be generated for this lot',
+    description:
+      'Validates product retail fields (or SKU/env defaults) and LABEL_OWNER_RUC. ' +
+      'All lots of the same product share the same readiness.',
+  })
+  @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
+  @ApiResponse({ status: 200, description: 'Readiness status' })
+  @ApiResponse({ status: 404, description: 'Lot not found' })
+  async getRetailLabelReadiness(@Param('lotCode') lotCode: string) {
+    const lot = await this.lotsService.findByLotCode(lotCode);
+    return checkRetailLabelReadiness(lot.product, {
+      ...this.retailLabelEnvDefaults(),
+      ownerRuc: this.configService.get<string>('labelOwnerRuc'),
+    });
+  }
+
+  @Get('code/:lotCode/retail-label/pdf')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Generate 12×18cm retail packaging labels (front/back) for Ecuador compliance',
+    description:
+      'Returns an A4 PDF with one 12cm×18cm label per page. Pages alternate front/back when sides=both. Requires product retail fields (GTIN, net weight) and LABEL_OWNER_RUC. Default copies=1, sides=both, includeTrace=true.',
+  })
+  @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
+  @ApiQuery({ name: 'copies', required: false, example: 1 })
+  @ApiQuery({ name: 'sides', required: false, enum: ['both', 'front', 'back'] })
+  @ApiQuery({ name: 'includeTrace', required: false, example: true })
+  @ApiProduces('application/pdf')
+  @ApiResponse({ status: 200, description: 'Retail label PDF' })
+  @ApiResponse({ status: 400, description: 'Invalid parameters or missing product/config data' })
+  @ApiResponse({ status: 404, description: 'Lot not found' })
+  async getRetailLabelPdf(
+    @Param('lotCode') lotCode: string,
+    @Query('copies', new DefaultValuePipe(1), ParseIntPipe) copies: number,
+    @Query('sides', new DefaultValuePipe('both')) sides: string,
+    @Query('includeTrace', new DefaultValuePipe(true), ParseBoolPipe) includeTrace: boolean,
+    @Res() res: Response,
+  ) {
+    if (copies < 1 || copies > MAX_COPIES) {
+      throw new BadRequestException(`copies must be between 1 and ${MAX_COPIES}`);
+    }
+
+    const validSides: RetailLabelSides[] = ['both', 'front', 'back'];
+    if (!validSides.includes(sides as RetailLabelSides)) {
+      throw new BadRequestException(`sides must be one of: ${validSides.join(', ')}`);
+    }
+
+    const lot = await this.lotsService.findByLotCode(lotCode);
+    const product = lot.product;
+
+    const readiness = checkRetailLabelReadiness(product, {
+      ...this.retailLabelEnvDefaults(),
+      ownerRuc: this.configService.get<string>('labelOwnerRuc'),
+    });
+    if (!readiness.ready || !readiness.resolved) {
+      throw new BadRequestException({
+        message:
+          'No se puede generar la etiqueta retail. Configure el producto (SKU) o variables de entorno.',
+        productId: readiness.productId,
+        productSku: readiness.productSku,
+        missing: readiness.missing,
+        hint:
+          'PATCH /products/:id/retail-label (admin), ejecutar npm run backfill:retail-labels, o definir LABEL_OWNER_RUC y LABEL_DEFAULT_* en .env',
+      });
+    }
+
+    const resolved = readiness.resolved;
+    const ownerRuc = this.configService.get<string>('labelOwnerRuc')!.trim();
+
+    const traceUrl = lot.publicTraceUrl ?? this.buildTraceUrl(lotCode);
+    const brandName =
+      this.configService.get<string>('labelBrandName')?.trim() || 'MAREA ALTA';
+    const logoUrl = this.configService.get<string>('labelLogoUrl')?.trim();
+
+    const pdf = await this.retailLabelPdfService.generateRetailLabelPdf({
+      labelTitle: resolved.labelTitle,
+      presentationSubtitle: RetailLabelPdfService.presentationSubtitle(lot.presentation),
+      netWeightLine: RetailLabelPdfService.buildNetWeightLine(
+        resolved.labelNetWeightOz,
+        resolved.labelNetWeightLbs,
+      ),
+      gtin13: resolved.gtin13,
+      brandName,
+      logoUrl: logoUrl || undefined,
+      manufacturingLine: RetailLabelPdfService.buildManufacturing({
+        coPackerName: lot.coPacker.name,
+        ownerLegalName:
+          this.configService.get<string>('labelOwnerLegalName')?.trim() || 'MAREA ALTA',
+        ownerRuc,
+        ownerLocation:
+          this.configService.get<string>('labelOwnerLocation')?.trim() ||
+          'Portoviejo - Manabí - Ecuador',
+      }),
+      sanitaryArcsaLine: RetailLabelPdfService.buildSanitaryLine(
+        resolved.labelSanitaryArcsa,
+        this.configService.get<string>('labelArcsaNotification')?.trim() || 'En trámite',
+      ),
+      copies,
+      sides: sides as RetailLabelSides,
+      includeTrace,
+      traceUrl: includeTrace ? traceUrl : undefined,
+    });
+
+    const filename = `retail-label-${lotCode}-x${copies}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.send(pdf);
+  }
+
   @Patch(':id/public-visibility')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
@@ -258,6 +381,18 @@ export class LotsController {
   @ApiResponse({ status: 404, description: 'Lot not found' })
   remove(@Param('id') id: string) {
     return this.lotsService.remove(id);
+  }
+
+  private retailLabelEnvDefaults(): RetailLabelEnvDefaults {
+    const oz = this.configService.get<number>('labelDefaultNetWeightOz');
+    const lbs = this.configService.get<number>('labelDefaultNetWeightLbs');
+    return {
+      gtin13: this.configService.get<string>('labelDefaultGtin13') || undefined,
+      netWeightOz: Number.isFinite(oz) ? oz : undefined,
+      netWeightLbs: Number.isFinite(lbs) ? lbs : undefined,
+      title: this.configService.get<string>('labelDefaultTitle') || undefined,
+      sanitaryArcsa: this.configService.get<string>('labelArcsaNotification') || undefined,
+    };
   }
 
   private buildTraceUrl(lotCode: string): string {

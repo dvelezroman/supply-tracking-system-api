@@ -125,6 +125,13 @@ model Product {
   /// Default public QR page visibility for **new** lots (copied into `Lot.publicVisibility` on create).
   publicVisibilityDefaults Json?
 
+  /// Retail packaging label (Ecuador normative) — per SKU, not per lot.
+  labelTitle           String?
+  labelGtin13          String?
+  labelNetWeightOz     Float?
+  labelNetWeightLbs    Float?
+  labelSanitaryArcsa   String?
+
   lots Lot[]
 
   createdAt DateTime @default(now())

@@ -11,6 +11,12 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as QRCode from 'qrcode';
+import { demoGtin13, ean13CheckDigit } from '../src/common/label/retail-label.constants';
+
+/** Distinct demo EAN-13 per SKU (replace with GS1 Ecuador codes before retail print). */
+function demoGtin13From12(gtin12: string): string {
+  return `${gtin12}${ean13CheckDigit(gtin12)}`;
+}
 
 const prisma = new PrismaClient();
 
@@ -211,6 +217,11 @@ async function main() {
       name: 'Camarón Premium "Marea Alta" (Cola)',
       description: 'Camarón Premium de exportación, presentación cola',
       category: 'Camarón',
+      labelTitle: 'Camarón Premium',
+      labelGtin13: demoGtin13(),
+      labelNetWeightOz: 32,
+      labelNetWeightLbs: 2,
+      labelSanitaryArcsa: 'En trámite',
     },
     {
       sku: 'CAMARON-BUTTERFLY-IQF',
@@ -223,6 +234,11 @@ async function main() {
       name: 'Camarón Shell On caja 4.5 kg',
       description: 'Entero con caparazón, empaque caja',
       category: 'Camarón',
+      labelTitle: 'Camarón Shell On',
+      labelGtin13: demoGtin13From12('593123456788'),
+      labelNetWeightOz: 158.7,
+      labelNetWeightLbs: 9.9,
+      labelSanitaryArcsa: 'En trámite',
     },
     {
       sku: 'FILETE-SALMON-ATLANTICO',
@@ -240,14 +256,23 @@ async function main() {
 
   const products: Record<string, { id: string; sku: string; name: string }> = {};
   for (const p of productDefs) {
+    const labelFields = {
+      labelTitle: 'labelTitle' in p ? (p as { labelTitle?: string }).labelTitle : undefined,
+      labelGtin13: 'labelGtin13' in p ? (p as { labelGtin13?: string }).labelGtin13 : undefined,
+      labelNetWeightOz: 'labelNetWeightOz' in p ? (p as { labelNetWeightOz?: number }).labelNetWeightOz : undefined,
+      labelNetWeightLbs: 'labelNetWeightLbs' in p ? (p as { labelNetWeightLbs?: number }).labelNetWeightLbs : undefined,
+      labelSanitaryArcsa:
+        'labelSanitaryArcsa' in p ? (p as { labelSanitaryArcsa?: string }).labelSanitaryArcsa : undefined,
+    };
     const row = await prisma.product.upsert({
       where: { sku: p.sku },
-      update: { name: p.name, description: p.description, category: p.category },
+      update: { name: p.name, description: p.description, category: p.category, ...labelFields },
       create: {
         sku: p.sku,
         name: p.name,
         description: p.description,
         category: p.category,
+        ...labelFields,
       },
     });
     products[p.sku] = row;

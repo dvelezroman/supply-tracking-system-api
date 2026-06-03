@@ -12,6 +12,8 @@ import {
   isPublicVisibilityKey,
   mergeVisibilityPatch,
 } from '../../common/public-visibility/public-visibility';
+import { normalizeGtin13 } from '../../common/label/retail-label.constants';
+import { PatchRetailLabelDto } from './dto/patch-retail-label.dto';
 
 @Injectable()
 export class ProductsService {
@@ -81,5 +83,50 @@ export class ProductsService {
     return this.productsRepository.update(id, {
       publicVisibilityDefaults: merged as unknown as Prisma.InputJsonValue,
     });
+  }
+
+  async updateRetailLabel(id: string, dto: PatchRetailLabelDto) {
+    const fields = [
+      'labelTitle',
+      'labelGtin13',
+      'labelNetWeightOz',
+      'labelNetWeightLbs',
+      'labelSanitaryArcsa',
+    ] as const;
+    const hasAny = fields.some((key) => dto[key] !== undefined);
+    if (!hasAny) {
+      throw new BadRequestException('At least one retail label field must be provided');
+    }
+
+    const data: Prisma.ProductUpdateInput = {};
+
+    if (dto.labelTitle !== undefined) {
+      data.labelTitle = dto.labelTitle;
+    }
+    if (dto.labelSanitaryArcsa !== undefined) {
+      data.labelSanitaryArcsa = dto.labelSanitaryArcsa;
+    }
+    if (dto.labelNetWeightOz !== undefined) {
+      data.labelNetWeightOz = dto.labelNetWeightOz;
+    }
+    if (dto.labelNetWeightLbs !== undefined) {
+      data.labelNetWeightLbs = dto.labelNetWeightLbs;
+    }
+    if (dto.labelGtin13 !== undefined) {
+      if (dto.labelGtin13 === null) {
+        data.labelGtin13 = null;
+      } else {
+        const normalized = normalizeGtin13(dto.labelGtin13);
+        if (!normalized) {
+          throw new BadRequestException(
+            'labelGtin13 must be a valid 13-digit EAN-13 (check digit included)',
+          );
+        }
+        data.labelGtin13 = normalized;
+      }
+    }
+
+    await this.findById(id);
+    return this.productsRepository.update(id, data);
   }
 }

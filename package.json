@@ -15,6 +15,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "backfill:retail-labels": "ts-node prisma/backfill-retail-labels.ts",
     "db:reset": "prisma migrate reset --force",
     "db:reset:no-seed": "prisma migrate reset --force --skip-seed",
     "db:reset:seed": "prisma migrate reset --force --skip-seed && npm run prisma:seed",

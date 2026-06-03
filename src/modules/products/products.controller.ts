@@ -23,6 +23,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { PatchPublicVisibilityDto } from '../lots/dto/patch-public-visibility.dto';
+import { PatchRetailLabelDto } from './dto/patch-retail-label.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -66,6 +67,23 @@ export class ProductsController {
     @Body() body: PatchPublicVisibilityDto,
   ) {
     return this.productsService.updatePublicVisibilityDefaults(id, body.patch);
+  }
+
+  @Patch(':id/retail-label')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Update retail packaging label fields for a product (admin)',
+    description:
+      'Partial update of Ecuador normative label data (GTIN, net weight, title, ARCSA). ' +
+      'Applied per SKU — all lots of this product use these values when generating retail label PDFs. ' +
+      'Send `null` to clear optional text fields.',
+  })
+  @ApiResponse({ status: 200, description: 'Product updated' })
+  @ApiResponse({ status: 400, description: 'Invalid GTIN or empty patch' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  patchRetailLabel(@Param('id') id: string, @Body() body: PatchRetailLabelDto) {
+    return this.productsService.updateRetailLabel(id, body);
   }
 
   @Get(':id')

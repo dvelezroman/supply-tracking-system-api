@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsObject,
   IsUUID,
+  IsDateString,
   MinLength,
   MaxLength,
 } from 'class-validator';
@@ -49,4 +50,9 @@ export class CreateEventDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'When the event occurred (ISO 8601)' })
+  @IsOptional()
+  @IsDateString()
+  timestamp?: string;
 }
