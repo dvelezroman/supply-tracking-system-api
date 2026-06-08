@@ -149,6 +149,8 @@ export class LotsService {
       maturationId,
       coPackerId,
       harvestDate,
+      labelElaborationDate,
+      labelExpirationDate,
       lotCode: _dtoLotCode,
       ...rest
     } = dto;
@@ -167,6 +169,12 @@ export class LotsService {
       ...rest,
       lotCode,
       harvestDate: new Date(harvestDate),
+      ...(labelElaborationDate !== undefined && {
+        labelElaborationDate: this.toLabelDate(labelElaborationDate),
+      }),
+      ...(labelExpirationDate !== undefined && {
+        labelExpirationDate: this.toLabelDate(labelExpirationDate),
+      }),
       publicTraceUrl,
       qrCodeDataUrl,
       publicVisibility: publicVisibility as unknown as Prisma.InputJsonValue,
@@ -253,16 +261,39 @@ export class LotsService {
 
   async update(id: string, dto: UpdateLotDto) {
     await this.findById(id);
-    const { farmId, labId, maturationId, coPackerId, harvestDate, ...rest } = dto as any;
+    const {
+      farmId,
+      labId,
+      maturationId,
+      coPackerId,
+      harvestDate,
+      labelElaborationDate,
+      labelExpirationDate,
+      ...rest
+    } = dto;
 
     return this.lotsRepository.update(id, {
       ...rest,
-      ...(harvestDate && { harvestDate: new Date(harvestDate) }),
+      ...(harvestDate !== undefined && { harvestDate: new Date(harvestDate) }),
+      ...(labelElaborationDate !== undefined && {
+        labelElaborationDate: this.toLabelDate(labelElaborationDate),
+      }),
+      ...(labelExpirationDate !== undefined && {
+        labelExpirationDate: this.toLabelDate(labelExpirationDate),
+      }),
       ...(farmId       && { farm:       { connect: { id: farmId } } }),
       ...(labId        && { lab:        { connect: { id: labId } } }),
       ...(maturationId && { maturation: { connect: { id: maturationId } } }),
       ...(coPackerId   && { coPacker:   { connect: { id: coPackerId } } }),
     });
+  }
+
+  /** Prisma DateTime fields reject bare YYYY-MM-DD strings; normalize to Date (or null to clear). */
+  private toLabelDate(value: string | null | undefined): Date | null {
+    if (value === null || value === undefined) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return new Date(trimmed);
   }
 
   /**
