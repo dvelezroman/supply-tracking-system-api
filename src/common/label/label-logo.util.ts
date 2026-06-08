@@ -1,11 +1,24 @@
 import { Logger } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import sharp from 'sharp';
 
 const logger = new Logger('LabelLogoUtil');
 
-export async function fetchLabelLogo(url?: string): Promise<Buffer | null> {
+/** Bundled Marea Alta logo used when LABEL_LOGO_URL is missing or unreachable. */
+export const DEFAULT_LABEL_LOGO_FALLBACK = join(__dirname, '..', '..', 'assets', 'marea-alta-logo.png');
+
+export async function fetchLabelLogo(
+  url?: string,
+  useDefaultFallback = true,
+): Promise<Buffer | null> {
+  const primary = await fetchLabelLogoPrimary(url);
+  if (primary) return primary;
+  if (!useDefaultFallback) return null;
+  return loadLogoFromFile(DEFAULT_LABEL_LOGO_FALLBACK);
+}
+
+async function fetchLabelLogoPrimary(url?: string): Promise<Buffer | null> {
   const u = url?.trim();
   if (!u) return null;
   if (!/^https?:\/\//i.test(u)) {

@@ -2,9 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as PDFDocument from 'pdfkit';
 import { QrService } from './qr.service';
-import sharp from 'sharp';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { fetchLabelLogo } from '../label/label-logo.util';
 
 type BwipJsNode = { toBuffer(opts: Record<string, unknown>): Promise<Buffer> };
 
@@ -92,8 +90,8 @@ export class PdfService {
     const [qrBuffer, barcodeBuffer, logoBuffer, bitflowLogoBuffer] = await Promise.all([
       this.qrService.generatePngForPdfLabel(url),
       this.buildBarcode(opts.lotCode),
-      this.fetchLogo(logoSource),
-      this.fetchLogo(bitflowLogoSource),
+      fetchLabelLogo(logoSource),
+      fetchLabelLogo(bitflowLogoSource, false),
     ]);
 
     return new Promise((resolve, reject) => {
@@ -293,17 +291,27 @@ export class PdfService {
     });
     rightY = doc.y + 5;
 
-    const wStr = Number.isInteger(ctx.netWeightKg)
-      ? `${ctx.netWeightKg}`
-      : ctx.netWeightKg.toFixed(2).replace(/\.?0+$/, '');
+    const grams = Math.round(ctx.netWeightKg * 1000);
+    const wStr = Number.isInteger(grams) ? `${grams}` : grams.toFixed(1).replace(/\.0$/, '');
     doc
       .font('Helvetica-Bold')
       .fontSize(8)
       .fillColor(TEXT)
-      .text(`PESO NETO: ${wStr} KG`, rightX, rightY, {
+      .text(`PESO NETO: ${wStr} g`, rightX, rightY, {
         width: rightW,
         align: 'center',
       });
+    rightY = doc.y + 8;
+
+    doc
+      .font('Helvetica')
+      .fontSize(6.2)
+      .fillColor(TEXT)
+      .text('Fecha de caducidad:', rightX, rightY, {
+        width: rightW,
+        align: 'center',
+      });
+    rightY = doc.y + 10;
 
     const footerY = innerY + innerH - 20;
     const footerW = innerW - 12;
@@ -356,59 +364,6 @@ export class PdfService {
       .lineWidth(0.35)
       .stroke();
     doc.font('Helvetica').fontSize(5).fillColor(MUTED).text('LOGO', x, y + 2.5, { width: w, align: 'center' });
-  }
-
-  private async fetchLogo(url?: string): Promise<Buffer | null> {
-    const u = url?.trim();
-    if (!u) return null;
-    if (!/^https?:\/\//i.test(u)) {
-      return this.loadLogoFromFile(u);
-    }
-    try {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 10000);
-      const res = await fetch(u, { signal: ac.signal, redirect: 'follow' });
-      clearTimeout(timer);
-      if (!res.ok) return null;
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length < 32 || buf.length > 8_000_000) return null;
-      const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
-      return this.normalizeLogoBuffer(buf, u, contentType);
-    } catch (e) {
-      this.logger.warn(`LABEL_LOGO_URL fetch failed: ${(e as Error).message}`);
-      return null;
-    }
-  }
-
-  private async loadLogoFromFile(pathValue: string): Promise<Buffer | null> {
-    try {
-      const absolute = pathValue.startsWith('/') ? pathValue : resolve(process.cwd(), pathValue);
-      const buf = await readFile(absolute);
-      if (buf.length < 32 || buf.length > 8_000_000) return null;
-      return this.normalizeLogoBuffer(buf, absolute, '');
-    } catch (e) {
-      this.logger.warn(`LABEL_LOGO_URL local file load failed: ${(e as Error).message}`);
-      return null;
-    }
-  }
-
-  private async normalizeLogoBuffer(
-    original: Buffer,
-    sourceUrl: string,
-    contentType: string,
-  ): Promise<Buffer | null> {
-    const ext = sourceUrl.split('?')[0]?.split('.').pop()?.toLowerCase() ?? '';
-    const startsAsSvg = original.subarray(0, 300).toString('utf8').toLowerCase().includes('<svg');
-    const isSvg = contentType.includes('image/svg') || ext === 'svg' || startsAsSvg;
-    if (!isSvg) return original;
-
-    try {
-      // PDFKit does not render SVG directly; convert once to PNG for stable label output.
-      return await sharp(original, { density: 300 }).png().toBuffer();
-    } catch (e) {
-      this.logger.warn(`LABEL_LOGO_URL svg conversion failed: ${(e as Error).message}`);
-      return null;
-    }
   }
 
   private async buildBarcode(text: string): Promise<Buffer> {

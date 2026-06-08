@@ -47,11 +47,14 @@ export function normalizeGtin13(gtin: string): string | null {
   return isValidGtin13(digits) ? digits : null;
 }
 
-export function formatNetWeightEs(oz: number, lbs: number): string {
+/** Formats a gram value for label copy (no unit suffix). */
+export function formatGramsForLabel(grams: number): string {
+  return Number.isInteger(grams) ? `${grams}` : grams.toFixed(1).replace(/\.0$/, '');
+}
+
+export function formatNetWeightEs(_oz: number, lbs: number): string {
   const g = netWeightGramsFromLbs(lbs);
-  const ozStr = Number.isInteger(oz) ? `${oz}` : oz.toFixed(1).replace(/\.0$/, '');
-  const lbsStr = Number.isInteger(lbs) ? `${lbs}` : lbs.toFixed(2).replace(/\.?0+$/, '');
-  return `Contenido Neto: ${ozStr} oz / ${lbsStr} lbs (${g} g)`;
+  return `Contenido Neto: ${formatGramsForLabel(g)} g`;
 }
 
 export function buildManufacturingLine(opts: {

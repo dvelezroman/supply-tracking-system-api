@@ -58,11 +58,15 @@ export type ResolvedRetailLabel = {
   labelSanitaryArcsa: string | null;
   /** Where each field was resolved from (for readiness UI). */
   sources: {
-    title: 'product' | 'sku-default' | 'env' | 'inferred-name';
+    title: 'lot' | 'product' | 'sku-default' | 'env' | 'inferred-name';
     gtin: 'product' | 'sku-default' | 'env';
     weight: 'product' | 'sku-default' | 'env';
     sanitary: 'product' | 'sku-default' | 'env';
   };
+};
+
+export type LotLabelInput = {
+  labelName: string | null | undefined;
 };
 
 export type RetailLabelReadiness = {
@@ -84,10 +88,10 @@ function inferTitleFromProductName(name: string): string {
 }
 
 /**
- * Resolves retail label fields for a product: DB → SKU catalog → env defaults.
- * Lots do not store retail data; configuring the product enables all its lots.
+ * Resolves retail label fields for a lot: lot label name + product/env defaults for GTIN, weight, etc.
  */
-export function resolveRetailLabelForProduct(
+export function resolveRetailLabelForLot(
+  lot: LotLabelInput,
   product: Pick<
     Product,
     | 'id'
@@ -133,8 +137,13 @@ export function resolveRetailLabelForProduct(
   }
   if (oz == null || lbs == null) missing.push('labelNetWeightOz/labelNetWeightLbs');
 
-  let title = product.labelTitle?.trim();
-  let titleSource: ResolvedRetailLabel['sources']['title'] = 'product';
+  let title = lot.labelName?.trim();
+  let titleSource: ResolvedRetailLabel['sources']['title'] = 'lot';
+  if (!title) {
+    missing.push('labelName');
+    title = product.labelTitle?.trim();
+    titleSource = 'product';
+  }
   if (!title && skuDefaults?.labelTitle) {
     title = skuDefaults.labelTitle;
     titleSource = 'sku-default';
@@ -181,7 +190,16 @@ export function resolveRetailLabelForProduct(
   };
 }
 
+/** @deprecated Use {@link resolveRetailLabelForLot} — kept for tests referencing product-only resolution. */
+export function resolveRetailLabelForProduct(
+  product: Parameters<typeof resolveRetailLabelForLot>[1],
+  env: RetailLabelEnvDefaults,
+): ReturnType<typeof resolveRetailLabelForLot> {
+  return resolveRetailLabelForLot({ labelName: null }, product, env);
+}
+
 export function checkRetailLabelReadiness(
+  lot: LotLabelInput,
   product: Pick<
     Product,
     | 'id'
@@ -195,7 +213,7 @@ export function checkRetailLabelReadiness(
   >,
   env: RetailLabelEnvDefaults & { ownerRuc?: string },
 ): RetailLabelReadiness {
-  const { resolved, missing } = resolveRetailLabelForProduct(product, env);
+  const { resolved, missing } = resolveRetailLabelForLot(lot, product, env);
   const allMissing = [...missing];
   if (!env.ownerRuc?.trim()) {
     allMissing.push('LABEL_OWNER_RUC');

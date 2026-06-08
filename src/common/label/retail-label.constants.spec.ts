@@ -24,8 +24,8 @@ describe('retail-label.constants', () => {
   });
 
   describe('formatNetWeightEs', () => {
-    it('formats 32 oz / 2 lbs with 907 g', () => {
-      expect(formatNetWeightEs(32, 2)).toBe('Contenido Neto: 32 oz / 2 lbs (907 g)');
+    it('formats net weight in grams only', () => {
+      expect(formatNetWeightEs(32, 2)).toBe('Contenido Neto: 907 g');
     });
 
     it('computes grams from pounds', () => {

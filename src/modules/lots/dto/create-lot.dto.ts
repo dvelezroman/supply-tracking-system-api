@@ -47,6 +47,17 @@ export class CreateLotDto {
   @IsUUID()
   productId: string;
 
+  @ApiProperty({
+    example: 'Camarón Premium',
+    description:
+      'Name printed on the retail packaging label (front). Not the catalogue product name.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  labelName: string;
+
   @ApiProperty({ enum: Presentation, example: Presentation.PD_TAIL_OFF })
   @IsEnum(Presentation)
   presentation: Presentation;

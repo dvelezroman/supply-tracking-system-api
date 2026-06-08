@@ -202,15 +202,14 @@ export class LotsController {
   @ApiOperation({
     summary: 'Check if retail label PDF can be generated for this lot',
     description:
-      'Validates product retail fields (or SKU/env defaults) and LABEL_OWNER_RUC. ' +
-      'All lots of the same product share the same readiness.',
+      'Validates lot label name, product retail fields (or SKU/env defaults) and LABEL_OWNER_RUC.',
   })
   @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
   @ApiResponse({ status: 200, description: 'Readiness status' })
   @ApiResponse({ status: 404, description: 'Lot not found' })
   async getRetailLabelReadiness(@Param('lotCode') lotCode: string) {
     const lot = await this.lotsService.findByLotCode(lotCode);
-    return checkRetailLabelReadiness(lot.product, {
+    return checkRetailLabelReadiness(lot, lot.product, {
       ...this.retailLabelEnvDefaults(),
       ownerRuc: this.configService.get<string>('labelOwnerRuc'),
     });
@@ -250,19 +249,19 @@ export class LotsController {
     const lot = await this.lotsService.findByLotCode(lotCode);
     const product = lot.product;
 
-    const readiness = checkRetailLabelReadiness(product, {
+    const readiness = checkRetailLabelReadiness(lot, product, {
       ...this.retailLabelEnvDefaults(),
       ownerRuc: this.configService.get<string>('labelOwnerRuc'),
     });
     if (!readiness.ready || !readiness.resolved) {
       throw new BadRequestException({
         message:
-          'No se puede generar la etiqueta retail. Configure el producto (SKU) o variables de entorno.',
+          'No se puede generar la etiqueta retail. Configure el nombre de etiqueta del lote, el producto (SKU) o variables de entorno.',
         productId: readiness.productId,
         productSku: readiness.productSku,
         missing: readiness.missing,
         hint:
-          'PATCH /products/:id/retail-label (admin), ejecutar npm run backfill:retail-labels, o definir LABEL_OWNER_RUC y LABEL_DEFAULT_* en .env',
+          'Edite el lote (labelName), PATCH /products/:id/retail-label (admin), ejecutar npm run backfill:retail-labels, o definir LABEL_OWNER_RUC y LABEL_DEFAULT_* en .env',
       });
     }
 

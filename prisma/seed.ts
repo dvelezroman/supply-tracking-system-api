@@ -281,6 +281,7 @@ async function main() {
   // ── Lots (lotCode unique) ─────────────────────────────────────────────────
   type LotSeed = {
     lotCode: string;
+    labelName: string;
     productSku: keyof typeof products;
     presentation: Presentation;
     packaging: Packaging;
@@ -300,6 +301,7 @@ async function main() {
   const lotSeeds: LotSeed[] = [
     {
       lotCode: 'P2-0226-PD-IQF-A',
+      labelName: 'Camarón Premium',
       productSku: 'CAMARON-MAREA-ALTA-COLA',
       presentation: Presentation.PD_TAIL_OFF,
       packaging: Packaging.IQF,
@@ -317,6 +319,7 @@ async function main() {
     },
     {
       lotCode: 'P2-0226-SO-CBX',
+      labelName: 'Camarón Shell On',
       productSku: 'CAMARON-SHELL-ON-BOX',
       presentation: Presentation.SHELL_ON,
       packaging: Packaging.CAJAS,
@@ -342,6 +345,7 @@ async function main() {
     const { publicTraceUrl, qrCodeDataUrl } = await traceQrArtifacts(L.lotCode);
 
     const lotUpdate = {
+      labelName: L.labelName,
       productId,
       presentation: L.presentation,
       packaging: L.packaging,
@@ -364,6 +368,7 @@ async function main() {
 
     const lotCreate = {
       lotCode: L.lotCode,
+      labelName: L.labelName,
       productId,
       presentation: L.presentation,
       packaging: L.packaging,

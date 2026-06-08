@@ -149,6 +149,9 @@ model Lot {
   /// This must be unique across the system.
   lotCode String @unique
 
+  /// Display name printed on the retail packaging label (front face). Not the catalogue product name.
+  labelName String
+
   product   Product @relation(fields: [productId], references: [id])
   productId String
 
