@@ -6,6 +6,10 @@ import {
   formatNetWeightEs,
   netWeightGramsFromLbs,
   buildManufacturingLine,
+  buildLabelElaborationLine,
+  buildLabelExpirationLine,
+  buildLabelManufacturedByLine,
+  formatLabelDateEs,
   demoGtin13,
   DEMO_GTIN12_ECUADOR,
 } from './retail-label.constants';
@@ -42,6 +46,19 @@ describe('retail-label.constants', () => {
     it('validates a correct EAN-13', () => {
       expect(isValidGtin13(demoGtin13())).toBe(true);
       expect(isValidGtin13('5931234567891')).toBe(false);
+    });
+  });
+
+  describe('formatLabelDateEs', () => {
+    it('formats UTC dates as DD/MM/YYYY', () => {
+      expect(formatLabelDateEs(new Date('2026-03-15T12:00:00.000Z'))).toBe('15/03/2026');
+    });
+
+    it('returns empty string when date is absent', () => {
+      expect(formatLabelDateEs(null)).toBe('');
+      expect(buildLabelElaborationLine(null)).toBe('Fecha de Elaboración: ');
+      expect(buildLabelExpirationLine(undefined)).toBe('Fecha de Caducidad: ');
+      expect(buildLabelManufacturedByLine('  ')).toBe('Fabricado por: ');
     });
   });
 

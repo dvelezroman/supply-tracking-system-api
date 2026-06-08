@@ -57,6 +57,37 @@ export function formatNetWeightEs(_oz: number, lbs: number): string {
   return `Contenido Neto: ${formatGramsForLabel(g)} g`;
 }
 
+/** Formats a date for label copy (DD/MM/YYYY). Returns empty string when absent. */
+export function formatLabelDateEs(date: Date | null | undefined): string {
+  if (!date) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const year = d.getUTCFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+export type LotLabelFields = {
+  labelConservationText?: string | null;
+  labelElaborationDate?: Date | null;
+  labelExpirationDate?: Date | null;
+  labelManufacturedBy?: string | null;
+};
+
+export function buildLabelElaborationLine(date: Date | null | undefined): string {
+  return `Fecha de Elaboración: ${formatLabelDateEs(date)}`;
+}
+
+export function buildLabelExpirationLine(date: Date | null | undefined): string {
+  return `Fecha de Caducidad: ${formatLabelDateEs(date)}`;
+}
+
+export function buildLabelManufacturedByLine(text: string | null | undefined): string {
+  const value = text?.trim() ?? '';
+  return `Fabricado por: ${value}`;
+}
+
 export function buildManufacturingLine(opts: {
   coPackerName: string;
   ownerLegalName: string;

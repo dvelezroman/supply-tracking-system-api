@@ -185,6 +185,7 @@ export class LotsController {
       productDescriptor: this.buildProductDescriptor(lot),
       originLine: this.buildOriginLine(lot),
       netWeightKg: lot.weightKg,
+      ...this.lotLabelFieldsFromLot(lot),
       copies,
       brandName,
       logoUrl: logoUrl || undefined,
@@ -283,6 +284,8 @@ export class LotsController {
       gtin13: resolved.gtin13,
       brandName,
       logoUrl: logoUrl || undefined,
+      lotCode: lot.lotCode,
+      ...this.lotLabelFieldsFromLot(lot),
       manufacturingLine: RetailLabelPdfService.buildManufacturing({
         coPackerName: lot.coPacker.name,
         ownerLegalName:
@@ -410,5 +413,19 @@ export class LotsController {
   private buildOriginLine(lot: { farm: { name: string; location: string | null } }): string {
     const parts = [lot.farm.name?.trim(), lot.farm.location?.trim()].filter(Boolean) as string[];
     return parts.length ? parts.join(' — ') : '—';
+  }
+
+  private lotLabelFieldsFromLot(lot: {
+    labelConservationText?: string | null;
+    labelElaborationDate?: Date | null;
+    labelExpirationDate?: Date | null;
+    labelManufacturedBy?: string | null;
+  }) {
+    return {
+      labelConservationText: lot.labelConservationText ?? null,
+      labelElaborationDate: lot.labelElaborationDate ?? null,
+      labelExpirationDate: lot.labelExpirationDate ?? null,
+      labelManufacturedBy: lot.labelManufacturedBy ?? null,
+    };
   }
 }

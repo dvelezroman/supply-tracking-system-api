@@ -58,6 +58,50 @@ export class CreateLotDto {
   @MaxLength(120)
   labelName: string;
 
+  @ApiPropertyOptional({
+    example: 'Mantener a -18°C',
+    description: 'Conservation text printed below the barcode on retail and QR labels.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    return typeof value === 'string' ? value.trim() : value;
+  })
+  @IsString()
+  @MaxLength(200)
+  labelConservationText?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-03-01',
+    description: 'Manufacturing date printed on retail and QR labels (ISO 8601 date).',
+  })
+  @IsOptional()
+  @IsDateString()
+  labelElaborationDate?: string;
+
+  @ApiPropertyOptional({
+    example: '2027-03-01',
+    description: 'Expiration date printed on retail and QR labels (ISO 8601 date).',
+  })
+  @IsOptional()
+  @IsDateString()
+  labelExpirationDate?: string;
+
+  @ApiPropertyOptional({
+    example: 'Sociedad Jaramillo Minaya',
+    description: 'Manufacturer line printed below net weight on retail and QR labels.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    return typeof value === 'string' ? value.trim() : value;
+  })
+  @IsString()
+  @MaxLength(200)
+  labelManufacturedBy?: string;
+
   @ApiProperty({ enum: Presentation, example: Presentation.PD_TAIL_OFF })
   @IsEnum(Presentation)
   presentation: Presentation;

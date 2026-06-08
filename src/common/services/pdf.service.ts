@@ -3,6 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import * as PDFDocument from 'pdfkit';
 import { QrService } from './qr.service';
 import { fetchLabelLogo } from '../label/label-logo.util';
+import {
+  buildLabelElaborationLine,
+  buildLabelExpirationLine,
+  buildLabelManufacturedByLine,
+  type LotLabelFields,
+} from '../label/retail-label.constants';
 
 type BwipJsNode = { toBuffer(opts: Record<string, unknown>): Promise<Buffer> };
 
@@ -60,11 +66,11 @@ const MUTED = '#333333';
 /** Marca / títulos en azul corporativo (legible en blanco y negro). */
 const BRAND = '#1a237e';
 
-/** ~35mm at print scale. */
-const QR_DRAW = 100;
+/** ~31mm at print scale (compact layout for extra label fields). */
+const QR_DRAW = 88;
 const INNER_PAD = 0;
 
-export interface QrPdfOptions {
+export interface QrPdfOptions extends LotLabelFields {
   lotCode: string;
   productDescriptor: string;
   originLine: string;
@@ -170,14 +176,14 @@ export class PdfService {
     headerY = doc.y + 1;
     doc
       .font('Helvetica-Bold')
-      .fontSize(9.8)
+      .fontSize(8.5)
       .fillColor(TEXT)
       .text(this.truncate(ctx.productDescriptor, 52), headerX, headerY, {
       width: headerW,
       align: 'center',
-      lineGap: 0.8,
+      lineGap: 0.5,
     });
-    const contentStartY = doc.y + 10;
+    const contentStartY = doc.y + 8;
 
     let leftY = contentStartY;
     let rightY = contentStartY;
@@ -221,22 +227,30 @@ export class PdfService {
     leftY = doc.y + 6;
 
     try {
-      doc.image(barcodeBuffer, leftX, leftY, { fit: [leftInnerW, 34], align: 'center' });
+      doc.image(barcodeBuffer, leftX, leftY, { fit: [leftInnerW, 28], align: 'center' });
     } catch {
       doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(ctx.lotCode, leftX, leftY + 9, {
         width: leftInnerW,
         align: 'center',
       });
     }
+    leftY += 30;
+
+    const conservationText = this.truncate(ctx.labelConservationText?.trim() ?? '', 40);
+    doc
+      .font('Helvetica')
+      .fontSize(4.8)
+      .fillColor(TEXT)
+      .text(conservationText, leftX, leftY, { width: leftInnerW, align: 'center', lineGap: 0.2 });
 
     if (logoBuffer) {
       try {
         doc.image(logoBuffer, rightX + (rightW - maxLogoW) / 2, rightY, {
-          fit: [maxLogoW, 42],
+          fit: [maxLogoW, 36],
           align: 'center',
           valign: 'center',
         });
-        rightY += 44;
+        rightY += 38;
       } catch {
         this.drawLogoPlaceholder(doc, rightX + rightW / 2, rightY + 6, maxLogoW);
         rightY += 20;
@@ -260,36 +274,36 @@ export class PdfService {
 
     doc
       .font('Helvetica-Bold')
-      .fontSize(5.9)
+      .fontSize(5.4)
       .fillColor(TEXT)
       .text('CONFIANZA TOTAL EN CADA ORIGEN', rightX, rightY, {
         width: rightW,
         align: 'center',
-        lineGap: 0.7,
+        lineGap: 0.4,
       });
-    rightY = doc.y + 3;
+    rightY = doc.y + 2;
 
-    doc.font('Helvetica-Bold').fontSize(5.8).fillColor(TEXT).text('Sociedad Jaramillo Minaya', rightX, rightY, {
+    doc.font('Helvetica-Bold').fontSize(5.4).fillColor(TEXT).text('Sociedad Jaramillo Minaya', rightX, rightY, {
       width: rightW,
       align: 'center',
-      lineGap: 0.6,
+      lineGap: 0.4,
     });
     rightY = doc.y + 1;
 
-    doc.font('Helvetica').fontSize(5.6).fillColor(MUTED).text('El Oro, Ecuador', rightX, rightY, {
+    doc.font('Helvetica').fontSize(5.2).fillColor(MUTED).text('El Oro, Ecuador', rightX, rightY, {
       width: rightW,
       align: 'center',
-      lineGap: 0.6,
+      lineGap: 0.4,
     });
-    rightY = doc.y + 14;
+    rightY = doc.y + 8;
 
     const origin = this.truncate(ctx.originLine || '—', 70);
-    doc.font('Helvetica').fontSize(6.2).fillColor(MUTED).text(origin, rightX, rightY, {
+    doc.font('Helvetica').fontSize(5.8).fillColor(MUTED).text(origin, rightX, rightY, {
       width: rightW,
       align: 'center',
-      lineGap: 1,
+      lineGap: 0.4,
     });
-    rightY = doc.y + 5;
+    rightY = doc.y + 4;
 
     const grams = Math.round(ctx.netWeightKg * 1000);
     const wStr = Number.isInteger(grams) ? `${grams}` : grams.toFixed(1).replace(/\.0$/, '');
@@ -301,17 +315,25 @@ export class PdfService {
         width: rightW,
         align: 'center',
       });
-    rightY = doc.y + 8;
+    rightY = doc.y + 5;
 
-    doc
-      .font('Helvetica')
-      .fontSize(6.2)
-      .fillColor(TEXT)
-      .text('Fecha de caducidad:', rightX, rightY, {
-        width: rightW,
-        align: 'center',
-      });
-    rightY = doc.y + 10;
+    const labelInfoLines = [
+      buildLabelElaborationLine(ctx.labelElaborationDate),
+      buildLabelExpirationLine(ctx.labelExpirationDate),
+      buildLabelManufacturedByLine(ctx.labelManufacturedBy),
+    ];
+    for (const line of labelInfoLines) {
+      doc
+        .font('Helvetica')
+        .fontSize(5.2)
+        .fillColor(TEXT)
+        .text(this.truncate(line, 72), rightX, rightY, {
+          width: rightW,
+          align: 'center',
+          lineGap: 0.3,
+        });
+      rightY = doc.y + 2;
+    }
 
     const footerY = innerY + innerH - 20;
     const footerW = innerW - 12;

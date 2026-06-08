@@ -12,6 +12,11 @@ import {
   formatNetWeightEs,
   buildManufacturingLine,
   buildSanitaryArcsaLine,
+  buildLabelElaborationLine,
+  buildLabelExpirationLine,
+  buildLabelManufacturedByLine,
+  formatLabelDateEs,
+  type LotLabelFields,
 } from '../label/retail-label.constants';
 
 type BwipJsNode = { toBuffer(opts: Record<string, unknown>): Promise<Buffer> };
@@ -35,7 +40,7 @@ const TRACE_QR_SIZE = 52;
 
 export type RetailLabelSides = 'both' | 'front' | 'back';
 
-export interface RetailLabelPdfOptions {
+export interface RetailLabelPdfOptions extends LotLabelFields {
   labelTitle: string;
   presentationSubtitle: string;
   netWeightLine: string;
@@ -44,6 +49,7 @@ export interface RetailLabelPdfOptions {
   logoUrl?: string;
   manufacturingLine: string;
   sanitaryArcsaLine: string;
+  lotCode: string;
   copies: number;
   sides: RetailLabelSides;
   includeTrace: boolean;
@@ -176,16 +182,33 @@ export class RetailLabelPdfService {
       .fontSize(10)
       .fillColor(TEXT)
       .text(ctx.netWeightLine, innerX, cy, { width: innerW, align: 'center' });
-    cy = doc.y + 14;
+    cy = doc.y + 8;
 
-    const eanBandH = 56;
+    const labelInfoLines = [
+      buildLabelElaborationLine(ctx.labelElaborationDate),
+      buildLabelExpirationLine(ctx.labelExpirationDate),
+      buildLabelManufacturedByLine(ctx.labelManufacturedBy),
+    ];
+    for (const line of labelInfoLines) {
+      doc
+        .font('Helvetica')
+        .fontSize(7.5)
+        .fillColor(TEXT)
+        .text(line, innerX, cy, { width: innerW, align: 'center', lineGap: 0.4 });
+      cy = doc.y + 4;
+    }
+
+    const conservationText = ctx.labelConservationText?.trim() ?? '';
+    const eanImageH = 46;
+    const conservationH = 12;
+    const eanBandH = eanImageH + conservationH + 6;
     const eanY = y + h - pad - eanBandH;
     doc.rect(innerX, eanY, innerW, eanBandH).fill('#FFFFFF');
     doc.rect(innerX, eanY, innerW, eanBandH).strokeColor(BORDER_COLOR).lineWidth(0.35).stroke();
 
     try {
-      doc.image(ctx.eanBuffer, innerX + 8, eanY + 4, {
-        fit: [innerW - 16, eanBandH - 14],
+      doc.image(ctx.eanBuffer, innerX + 8, eanY + 3, {
+        fit: [innerW - 16, eanImageH],
         align: 'center',
         valign: 'center',
       });
@@ -195,8 +218,18 @@ export class RetailLabelPdfService {
         .font('Helvetica')
         .fontSize(9)
         .fillColor(TEXT)
-        .text(ctx.gtin13, innerX, eanY + 20, { width: innerW, align: 'center' });
+        .text(ctx.gtin13, innerX, eanY + 16, { width: innerW, align: 'center' });
     }
+
+    doc
+      .font('Helvetica')
+      .fontSize(7)
+      .fillColor(TEXT)
+      .text(conservationText, innerX, eanY + eanImageH + 2, {
+        width: innerW,
+        align: 'center',
+        lineGap: 0.3,
+      });
   }
 
   private renderBack(
@@ -249,9 +282,19 @@ export class RetailLabelPdfService {
       .font('Helvetica')
       .fontSize(6.5)
       .fillColor(TEXT)
-      .text('Lote: __', innerX + 6, cy + 6, { width: textW - 12 })
-      .text('Fecha de Elaboración: DD/MM/AAAA', innerX + 6, cy + 16, { width: textW - 12 })
-      .text('Fecha de Vencimiento: DD/MM/AAAA', innerX + 6, cy + 26, { width: textW - 12 });
+      .text(`Lote: ${ctx.lotCode}`, innerX + 6, cy + 6, { width: textW - 12 })
+      .text(
+        `Fecha de Elaboración: ${formatLabelDateEs(ctx.labelElaborationDate)}`,
+        innerX + 6,
+        cy + 16,
+        { width: textW - 12 },
+      )
+      .text(
+        `Fecha de Vencimiento: ${formatLabelDateEs(ctx.labelExpirationDate)}`,
+        innerX + 6,
+        cy + 26,
+        { width: textW - 12 },
+      );
     cy += stampH + 6;
 
     writeBlock(SEMAFORO_EXEMPTION_TEXT, 4.8);
