@@ -200,7 +200,7 @@ export class RetailLabelPdfService {
 
     const conservationText = ctx.labelConservationText?.trim() ?? '';
     const eanImageH = 46;
-    const conservationH = 12;
+    const conservationH = 18;
     const eanBandH = eanImageH + conservationH + 6;
     const eanY = y + h - pad - eanBandH;
     doc.rect(innerX, eanY, innerW, eanBandH).fill('#FFFFFF');
@@ -223,12 +223,12 @@ export class RetailLabelPdfService {
 
     doc
       .font('Helvetica')
-      .fontSize(7)
+      .fontSize(14)
       .fillColor(TEXT)
       .text(conservationText, innerX, eanY + eanImageH + 2, {
         width: innerW,
         align: 'center',
-        lineGap: 0.3,
+        lineGap: 0.4,
       });
   }
 

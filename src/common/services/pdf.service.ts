@@ -239,9 +239,9 @@ export class PdfService {
     const conservationText = this.truncate(ctx.labelConservationText?.trim() ?? '', 40);
     doc
       .font('Helvetica')
-      .fontSize(4.8)
+      .fontSize(8.5)
       .fillColor(TEXT)
-      .text(conservationText, leftX, leftY, { width: leftInnerW, align: 'center', lineGap: 0.2 });
+      .text(conservationText, leftX, leftY, { width: leftInnerW, align: 'center', lineGap: 0.3 });
 
     if (logoBuffer) {
       try {
@@ -281,20 +281,6 @@ export class PdfService {
         align: 'center',
         lineGap: 0.4,
       });
-    rightY = doc.y + 2;
-
-    doc.font('Helvetica-Bold').fontSize(5.4).fillColor(TEXT).text('Sociedad Jaramillo Minaya', rightX, rightY, {
-      width: rightW,
-      align: 'center',
-      lineGap: 0.4,
-    });
-    rightY = doc.y + 1;
-
-    doc.font('Helvetica').fontSize(5.2).fillColor(MUTED).text('El Oro, Ecuador', rightX, rightY, {
-      width: rightW,
-      align: 'center',
-      lineGap: 0.4,
-    });
     rightY = doc.y + 8;
 
     const origin = this.truncate(ctx.originLine || '—', 70);
