@@ -37,7 +37,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { QrService } from '../../common/services/qr.service';
-import { PdfService, QR_PER_PAGE } from '../../common/services/pdf.service';
+import { PdfService, QR_PER_PAGE, type QrPdfLayout } from '../../common/services/pdf.service';
 import {
   RetailLabelPdfService,
   RetailLabelSides,
@@ -150,27 +150,39 @@ export class LotsController {
   @Get('code/:lotCode/qr/pdf')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({
-    summary: 'Generate 10x8cm packaging labels (A4 grid) for a lot',
-    description: `Returns a printable A4 PDF with labels sized 10cm width x 8cm height (up to ${QR_PER_PAGE} labels per page), arranged in the layout that fits the most labels per sheet: brand/logo, lot code, Code 128 barcode, QR (public trace URL), origin line, and net weight. Default copies=${QR_PER_PAGE}. Max ${MAX_COPIES} per request. Configure LABEL_LOGO_URL and LABEL_BRAND_NAME on the API.`,
+    summary: 'Generate packaging QR labels for a lot',
+    description: `Returns a printable A4 PDF. Layout \`grid\` (default): 10×8 cm labels, up to ${QR_PER_PAGE} per page. Layout \`fullPage\`: one label per A4 portrait sheet, scaled to fill the page while keeping the 10×8 cm proportions (21×16.8 cm). Includes brand/logo, lot code, Code 128 barcode, QR (public trace URL), origin line, and net weight. Default copies=${QR_PER_PAGE}. Max ${MAX_COPIES} per request.`,
   })
   @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
   @ApiQuery({
     name: 'copies',
     required: false,
-    description: `Number of 10cm (width) x 8cm (height) labels to generate (default: ${QR_PER_PAGE}, max: ${MAX_COPIES})`,
+    description: `Number of labels to generate (default: ${QR_PER_PAGE}, max: ${MAX_COPIES})`,
     example: 4,
   })
+  @ApiQuery({
+    name: 'layout',
+    required: false,
+    description: 'Label layout: grid (10×8 cm tiled) or fullPage (one label per A4, scaled to fill page)',
+    enum: ['grid', 'fullPage'],
+    example: 'grid',
+  })
   @ApiProduces('application/pdf')
-  @ApiResponse({ status: 200, description: 'PDF file with 8cm x 10cm labels arranged on A4 pages' })
-  @ApiResponse({ status: 400, description: 'copies must be between 1 and 500' })
+  @ApiResponse({ status: 200, description: 'PDF file with packaging labels' })
+  @ApiResponse({ status: 400, description: 'Invalid copies or layout' })
   @ApiResponse({ status: 404, description: 'Lot not found' })
   async getQrPdf(
     @Param('lotCode') lotCode: string,
     @Query('copies', new DefaultValuePipe(QR_PER_PAGE), ParseIntPipe) copies: number,
+    @Query('layout', new DefaultValuePipe('grid')) layout: string,
     @Res() res: Response,
   ) {
     if (copies < 1 || copies > MAX_COPIES) {
       throw new BadRequestException(`copies must be between 1 and ${MAX_COPIES}`);
+    }
+    const pdfLayout = layout as QrPdfLayout;
+    if (pdfLayout !== 'grid' && pdfLayout !== 'fullPage') {
+      throw new BadRequestException('layout must be "grid" or "fullPage"');
     }
 
     const lot = await this.lotsService.findByLotCode(lotCode);
@@ -187,11 +199,13 @@ export class LotsController {
       netWeightKg: lot.weightKg,
       ...this.lotLabelFieldsFromLot(lot),
       copies,
+      layout: pdfLayout,
       brandName,
       logoUrl: logoUrl || undefined,
     });
 
-    const filename = `qr-labels-${lotCode}-x${copies}.pdf`;
+    const layoutSuffix = pdfLayout === 'fullPage' ? '-fullpage' : '';
+    const filename = `qr-labels-${lotCode}-x${copies}${layoutSuffix}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', pdf.length);
