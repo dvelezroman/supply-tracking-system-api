@@ -4,10 +4,11 @@ import { PublicBrandingController } from './public-branding.controller';
 import { PublicTraceService } from './public-trace.service';
 import { LotsModule } from '../lots/lots.module';
 import { QrService } from '../../common/services/qr.service';
+import { PdfService } from '../../common/services/pdf.service';
 
 @Module({
   imports: [LotsModule],
   controllers: [PublicTraceController, PublicBrandingController],
-  providers: [PublicTraceService, QrService],
+  providers: [PublicTraceService, QrService, PdfService],
 })
 export class PublicTraceModule {}

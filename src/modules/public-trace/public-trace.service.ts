@@ -10,6 +10,7 @@ import {
   buildPublicTracePayload,
   resolveVisibility,
 } from '../../common/public-visibility/public-visibility';
+import { buildGlobalTraceEntryUrl } from '../../common/trace/trace-url.util';
 
 @Injectable()
 export class PublicTraceService {
@@ -73,11 +74,7 @@ export class PublicTraceService {
   ) {
     const { lot, events } = await this.lotsService.getHistory(lotCode);
 
-    const frontendUrl =
-      this.configService.get<string>('frontendUrl') ?? 'http://localhost:4200';
-    const traceUrlFallback =
-      lot.publicTraceUrl ??
-      `${frontendUrl}/trace/${encodeURIComponent(lotCode)}`;
+    const globalTraceUrl = buildGlobalTraceEntryUrl(this.configService);
 
     const vis = resolveVisibility(lot.publicVisibility);
     const deliveryTotals =
@@ -100,9 +97,9 @@ export class PublicTraceService {
       buildOpts,
     );
 
-    const traceUrl = vis.showPublicQrBlock ? traceUrlFallback : null;
+    const traceUrl = vis.showPublicQrBlock ? globalTraceUrl : null;
     const qrDataUrl = vis.showPublicQrBlock
-      ? lot.qrCodeDataUrl ?? (await this.qrService.generateDataUrl(traceUrlFallback))
+      ? await this.qrService.generateDataUrl(globalTraceUrl)
       : null;
 
     const restaurantDeliveryPending =

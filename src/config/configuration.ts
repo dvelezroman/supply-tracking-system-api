@@ -2,6 +2,8 @@ export default () => ({
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:4200',
+  /** Public trace lookup entry path (single QR destination). Default /trace */
+  publicTraceEntryPath: process.env.PUBLIC_TRACE_ENTRY_PATH?.trim() || '/trace',
   labelLogoUrl: process.env.LABEL_LOGO_URL?.trim() || '',
   labelBrandName: process.env.LABEL_BRAND_NAME?.trim() || '',
   labelOwnerRuc: process.env.LABEL_OWNER_RUC?.trim() || '',

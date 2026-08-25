@@ -11,7 +11,6 @@ import { LotsRepository } from './lots.repository';
 import { CreateLotDto } from './dto/create-lot.dto';
 import { UpdateLotDto } from './dto/update-lot.dto';
 import type { LotListQueryDto } from './dto/lot-list-query.dto';
-import { QrService } from '../../common/services/qr.service';
 import {
   isPublicVisibilityKey,
   mergeVisibilityPatch,
@@ -30,7 +29,6 @@ export class LotsService {
     private readonly lotsRepository: LotsRepository,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-    private readonly qrService: QrService,
     private readonly lotAvailabilityService: LotAvailabilityService,
   ) {}
 
@@ -84,13 +82,6 @@ export class LotsService {
       throw new NotFoundException('This restaurant is not linked to this lot');
     }
     return { deleted: result.count };
-  }
-
-  private buildPublicTraceUrl(lotCode: string): string {
-    const base =
-      this.configService.get<string>('frontendUrl') ?? 'http://localhost:4200';
-    const trimmed = base.replace(/\/$/, '');
-    return `${trimmed}/trace/${encodeURIComponent(lotCode)}`;
   }
 
   async suggestNextLotCode(query: SuggestLotCodeQueryDto): Promise<{ lotCode: string }> {
@@ -162,9 +153,6 @@ export class LotsService {
     if (!product) throw new NotFoundException('Product not found');
     const publicVisibility = resolveVisibility(product?.publicVisibilityDefaults);
 
-    const publicTraceUrl = this.buildPublicTraceUrl(lotCode);
-    const qrCodeDataUrl = await this.qrService.generateDataUrl(publicTraceUrl);
-
     return this.lotsRepository.create({
       ...rest,
       lotCode,
@@ -175,8 +163,6 @@ export class LotsService {
       ...(labelExpirationDate !== undefined && {
         labelExpirationDate: this.toLabelDate(labelExpirationDate),
       }),
-      publicTraceUrl,
-      qrCodeDataUrl,
       publicVisibility: publicVisibility as unknown as Prisma.InputJsonValue,
       product: { connect: { id: productId } },
       farm: { connect: { id: farmId } },
@@ -202,7 +188,7 @@ export class LotsService {
 
   /**
    * List payloads must not embed `qrCodeDataUrl` (full PNG as data URL per row) — it breaks
-   * JSON size and the Angular table. QR is loaded from `GET .../lots/code/:lotCode/qr` or detail.
+   * JSON size and the Angular table. Global QR is loaded from GET /public/trace/qr or lot detail.
    */
   private stripQrDataUrlForList<T extends { qrCodeDataUrl?: string | null }>(lot: T): Omit<T, 'qrCodeDataUrl'> {
     const { qrCodeDataUrl: _drop, ...rest } = lot;

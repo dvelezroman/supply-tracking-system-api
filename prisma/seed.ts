@@ -10,7 +10,6 @@ import {
   ColorSalmoFan,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import * as QRCode from 'qrcode';
 import { demoGtin13, ean13CheckDigit } from '../src/common/label/retail-label.constants';
 
 /** Distinct demo EAN-13 per SKU (replace with GS1 Ecuador codes before retail print). */
@@ -25,23 +24,18 @@ const prisma = new PrismaClient();
  * reconciles known rows by natural keys (`email`, `id`, `sku`, `lotCode`, event `id`).
  */
 
-/** Same pattern as API `LotsService` / landing — must match `FRONTEND_URL` for scannable QRs. */
-function publicTraceUrlForSeed(lotCode: string): string {
+/** Global trace lookup URL — single QR for all lots. */
+function globalTraceEntryUrlForSeed(): string {
   const base = (process.env.FRONTEND_URL ?? 'http://localhost:4200').replace(/\/$/, '');
-  return `${base}/trace/${encodeURIComponent(lotCode)}`;
+  const path = (process.env.PUBLIC_TRACE_ENTRY_PATH ?? '/trace').trim();
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
 }
 
-async function traceQrArtifacts(lotCode: string): Promise<{
-  publicTraceUrl: string;
-  qrCodeDataUrl: string;
-}> {
-  const publicTraceUrl = publicTraceUrlForSeed(lotCode);
-  const qrCodeDataUrl = await QRCode.toDataURL(publicTraceUrl, {
-    width: 300,
-    margin: 2,
-    color: { dark: '#1a237e', light: '#ffffff' },
-  });
-  return { publicTraceUrl, qrCodeDataUrl };
+/** Legacy per-lot URL — old printed QRs may still use this pattern. */
+function legacyLotTraceUrlForSeed(lotCode: string): string {
+  const base = (process.env.FRONTEND_URL ?? 'http://localhost:4200').replace(/\/$/, '');
+  return `${base}/trace/${encodeURIComponent(lotCode)}`;
 }
 
 /** UTC: start of calendar day for harvest (lot.harvestDate alignment). */
@@ -342,7 +336,6 @@ async function main() {
   for (const L of lotSeeds) {
     const harvestDate = utcDay(L.harvestY, L.harvestM, L.harvestD);
     const productId = products[L.productSku].id;
-    const { publicTraceUrl, qrCodeDataUrl } = await traceQrArtifacts(L.lotCode);
 
     const lotUpdate = {
       labelName: L.labelName,
@@ -362,8 +355,6 @@ async function main() {
       labId: lab.id,
       maturationId: maturation.id,
       coPackerId: coPacker.id,
-      publicTraceUrl,
-      qrCodeDataUrl,
     } as unknown as Prisma.LotUncheckedUpdateInput;
 
     const lotCreate = {
@@ -385,8 +376,6 @@ async function main() {
       labId: lab.id,
       maturationId: maturation.id,
       coPackerId: coPacker.id,
-      publicTraceUrl,
-      qrCodeDataUrl,
     } as unknown as Prisma.LotUncheckedCreateInput;
 
     const lot = await prisma.lot.upsert({
@@ -864,17 +853,18 @@ async function main() {
   }
   console.log(`  Lotes totales: ${lots.length} (${lots.map((l) => l.lotCode).join(', ')})`);
   console.log(
-    '  Cada lote tiene publicTraceUrl + qrCodeDataUrl (QR apunta a /trace/:lotCode en el front).',
+    '  QR único de trazabilidad →',
+    globalTraceEntryUrlForSeed(),
   );
-  console.log('\n  Prueba desde el celular (mismo enlace que codifica el QR):');
+  console.log('\n  Prueba trazabilidad por código de lote (ejemplos):');
   for (const L of lotSeeds) {
-    console.log(`    · ${L.lotCode} → ${publicTraceUrlForSeed(L.lotCode)}`);
+    console.log(`    · ${L.lotCode} → ${legacyLotTraceUrlForSeed(L.lotCode)} (URL directa / compat.)`);
   }
   console.log(
-    `  FRONTEND_URL=${process.env.FRONTEND_URL ?? 'http://localhost:4200'} — si el móvil no alcanza localhost, usa la IP de tu PC (ej. http://192.168.1.10:4200) y vuelve a ejecutar el seed o exporta FRONTEND_URL antes.`,
+    `  FRONTEND_URL=${process.env.FRONTEND_URL ?? 'http://localhost:4200'} — si el móvil no alcanza localhost, usa la IP de tu PC (ej. http://192.168.1.10:4200).`,
   );
   console.log(
-    '  API (PNG): GET /api/v0/lots/code/<LOT_CODE>/qr  — PDF: .../qr/pdf?copies=30',
+    '  API: GET /api/v0/public/trace/qr (QR global PNG) — empaque: GET /api/v0/lots/code/<LOT_CODE>/qr/pdf',
   );
 }
 

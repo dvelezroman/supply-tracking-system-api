@@ -97,6 +97,13 @@ export interface QrPdfOptions extends LotLabelFields {
   layout?: QrPdfLayout;
 }
 
+export interface GlobalQrPdfOptions {
+  copies: number;
+  brandName: string;
+  logoUrl?: string;
+  layout?: QrPdfLayout;
+}
+
 @Injectable()
 export class PdfService {
   private readonly logger = new Logger(PdfService.name);
@@ -162,6 +169,143 @@ export class PdfService {
 
       doc.end();
     });
+  }
+
+  /** Single global trace QR labels (no lot code — same QR on all packaging). */
+  async generateGlobalQrPdf(url: string, opts: GlobalQrPdfOptions): Promise<Buffer> {
+    const layout = opts.layout ?? 'grid';
+    const logoSource = opts.logoUrl ?? this.configService.get<string>('labelLogoUrl') ?? '';
+    const bitflowLogoSource = this.configService.get<string>('bitflowLogoUrl') ?? '';
+    const bitflowSiteUrl = this.configService.get<string>('bitflowSiteUrl')?.trim() || 'bitflow.bid';
+    const [qrBuffer, logoBuffer, bitflowLogoBuffer] = await Promise.all([
+      this.qrService.generatePngForPdfLabel(url, layout === 'fullPage' ? 640 : 400),
+      fetchLabelLogo(logoSource),
+      fetchLabelLogo(bitflowLogoSource, false),
+    ]);
+
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const isFullPage = layout === 'fullPage';
+      const pageW = isFullPage ? A4_PORTRAIT_W : PAGE_LAYOUT.pageW;
+      const pageH = isFullPage ? A4_PORTRAIT_H : PAGE_LAYOUT.pageH;
+      const doc = new PDFDocument({ size: [pageW, pageH], margin: 0, autoFirstPage: true });
+
+      doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      const render = (cellX: number, cellY: number, cellW: number, cellH: number) => {
+        this.renderGlobalTraceLabel(doc, cellX, cellY, cellW, cellH, {
+          brandName: opts.brandName,
+          qrBuffer,
+          logoBuffer,
+          bitflowLogoBuffer,
+          bitflowSiteUrl,
+        });
+      };
+
+      if (isFullPage) {
+        const { x, y, w, h } = FULL_PAGE_LABEL_RECT;
+        for (let i = 0; i < opts.copies; i++) {
+          if (i > 0) doc.addPage();
+          render(x, y, w, h);
+        }
+      } else {
+        for (let i = 0; i < opts.copies; i++) {
+          const posOnPage = i % QR_PER_PAGE;
+          if (i > 0 && posOnPage === 0) doc.addPage();
+          const col = posOnPage % PAGE_LAYOUT.cols;
+          const row = Math.floor(posOnPage / PAGE_LAYOUT.cols);
+          const x = PAGE_LAYOUT.startX + col * (LABEL_W + GUTTER);
+          const y = PAGE_LAYOUT.startY + row * (LABEL_H + GUTTER);
+          render(x, y, LABEL_W, LABEL_H);
+        }
+      }
+
+      doc.end();
+    });
+  }
+
+  private renderGlobalTraceLabel(
+    doc: PDFKit.PDFDocument,
+    cellX: number,
+    cellY: number,
+    cellW: number,
+    cellH: number,
+    ctx: {
+      brandName: string;
+      qrBuffer: Buffer;
+      logoBuffer: Buffer | null;
+      bitflowLogoBuffer: Buffer | null;
+      bitflowSiteUrl: string;
+    },
+  ): void {
+    const s = cellW / LABEL_W;
+    const cornerR = 3 * s;
+    const borderW = 0.75 * s;
+    const pad = 8 * s;
+    const innerX = cellX + pad;
+    const innerW = cellW - pad * 2;
+
+    doc.roundedRect(cellX, cellY, cellW, cellH, cornerR).fill(PANEL_BG);
+    doc.roundedRect(cellX, cellY, cellW, cellH, cornerR).strokeColor(BORDER_COLOR).lineWidth(borderW).stroke();
+
+    let cy = cellY + pad;
+    if (ctx.logoBuffer) {
+      try {
+        doc.image(ctx.logoBuffer, innerX + (innerW - 100 * s) / 2, cy, {
+          fit: [100 * s, 28 * s],
+          align: 'center',
+        });
+        cy += 32 * s;
+      } catch {
+        cy += 4 * s;
+      }
+    }
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(7 * s)
+      .fillColor(BRAND)
+      .text(ctx.brandName.toUpperCase(), innerX, cy, { width: innerW, align: 'center' });
+    cy = doc.y + (6 * s);
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(6.2 * s)
+      .fillColor(TEXT)
+      .text('ESCANEA PARA CONSULTAR TRAZABILIDAD', innerX, cy, {
+        width: innerW,
+        align: 'center',
+        lineGap: 0.4 * s,
+      });
+    cy = doc.y + (4 * s);
+
+    doc
+      .font('Helvetica')
+      .fontSize(5.2 * s)
+      .fillColor(MUTED)
+      .text('Ingrese el código de lote impreso en el empaque', innerX, cy, {
+        width: innerW,
+        align: 'center',
+        lineGap: 0.3 * s,
+      });
+    cy = doc.y + (8 * s);
+
+    const qrDraw = Math.min(QR_DRAW * s * 1.1, innerW - 4 * s, cellH * 0.42);
+    const qrX = innerX + (innerW - qrDraw) / 2;
+    doc.rect(qrX - s, cy - s, qrDraw + 2 * s, qrDraw + 2 * s).strokeColor(BORDER_COLOR).lineWidth(0.45 * s).stroke();
+    doc.image(ctx.qrBuffer, qrX, cy, { width: qrDraw, height: qrDraw });
+
+    const footerY = cellY + cellH - pad - 14 * s;
+    doc
+      .font('Helvetica')
+      .fontSize(4.2 * s)
+      .fillColor(MUTED)
+      .text('QR único · código de lote en etiqueta del producto', innerX, footerY, {
+        width: innerW,
+        align: 'center',
+      });
   }
 
   private renderPackagingLabel(
@@ -235,10 +379,21 @@ export class PdfService {
       .font('Helvetica-Bold')
       .fontSize(6.7 * s)
       .fillColor(TEXT)
-      .text('ESCANEA MI TRAZABILIDAD', leftX, leftY, {
+      .text('ESCANEA Y INGRESA CÓDIGO DE LOTE', leftX, leftY, {
         width: leftInnerW,
         align: 'center',
         lineGap: 0.5 * s,
+      });
+    leftY = doc.y + (3 + vGap) * s;
+
+    doc
+      .font('Helvetica')
+      .fontSize(5 * s)
+      .fillColor(MUTED)
+      .text('Use el QR y escriba el código impreso abajo', leftX, leftY, {
+        width: leftInnerW,
+        align: 'center',
+        lineGap: 0.3 * s,
       });
     leftY = doc.y + (4 + vGap) * s;
 

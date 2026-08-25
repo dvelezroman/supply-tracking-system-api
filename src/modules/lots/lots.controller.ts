@@ -47,6 +47,7 @@ import {
   type RetailLabelEnvDefaults,
 } from '../../common/label/retail-label.resolve';
 import { ConfigService } from '@nestjs/config';
+import { buildGlobalTraceEntryUrl } from '../../common/trace/trace-url.util';
 
 const MAX_COPIES = 500;
 
@@ -101,6 +102,60 @@ export class LotsController {
     return this.lotsService.suggestNextLotCode(query);
   }
 
+  @Get('trace/qr')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Global traceability QR PNG',
+    description: 'Returns a PNG for the single packaging QR that opens the lot-code lookup page.',
+  })
+  @ApiProduces('image/png')
+  async getGlobalTraceQr(@Res() res: Response) {
+    const traceUrl = buildGlobalTraceEntryUrl(this.configService);
+    const png = await this.qrService.generatePng(traceUrl);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', 'inline; filename="trace-qr-global.png"');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(png);
+  }
+
+  @Get('trace/qr/pdf')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Global traceability QR label PDF',
+    description: 'Printable A4 PDF with the single packaging QR (no lot code on label).',
+  })
+  @ApiQuery({ name: 'copies', required: false })
+  @ApiQuery({ name: 'layout', required: false, enum: ['grid', 'fullPage'] })
+  @ApiProduces('application/pdf')
+  async getGlobalTraceQrPdf(
+    @Query('copies', new DefaultValuePipe(QR_PER_PAGE), ParseIntPipe) copies: number,
+    @Query('layout', new DefaultValuePipe('grid')) layout: string,
+    @Res() res: Response,
+  ) {
+    if (copies < 1 || copies > MAX_COPIES) {
+      throw new BadRequestException(`copies must be between 1 and ${MAX_COPIES}`);
+    }
+    const pdfLayout = layout as QrPdfLayout;
+    if (pdfLayout !== 'grid' && pdfLayout !== 'fullPage') {
+      throw new BadRequestException('layout must be "grid" or "fullPage"');
+    }
+    const traceUrl = buildGlobalTraceEntryUrl(this.configService);
+    const brandName =
+      this.configService.get<string>('labelBrandName')?.trim() || 'MAREA ALTA';
+    const logoUrl = this.configService.get<string>('labelLogoUrl')?.trim();
+    const pdf = await this.pdfService.generateGlobalQrPdf(traceUrl, {
+      copies,
+      layout: pdfLayout,
+      brandName,
+      logoUrl: logoUrl || undefined,
+    });
+    const layoutSuffix = pdfLayout === 'fullPage' ? '-fullpage' : '';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="trace-qr-global-x${copies}${layoutSuffix}.pdf"`);
+    res.setHeader('Content-Length', pdf.length);
+    res.send(pdf);
+  }
+
   // ── Static `code/*` routes before `:id` so "code" is not captured as an id ──
 
   @Get('code/:lotCode')
@@ -126,23 +181,21 @@ export class LotsController {
   @Get('code/:lotCode/qr')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({
-    summary: 'Get QR code PNG for a lot',
-    description: 'Returns a PNG image encoding the public traceability URL.',
+    summary: 'Get global traceability QR PNG (legacy route alias)',
+    description: 'Deprecated: prefer GET /lots/trace/qr. Returns the single packaging QR PNG.',
   })
   @ApiParam({ name: 'lotCode', example: 'P2-0226-PD-IQF-A' })
   @ApiProduces('image/png')
   @ApiResponse({ status: 200, description: 'QR code PNG' })
   async getQrCode(
-    @Param('lotCode') lotCode: string,
+    @Param('lotCode') _lotCode: string,
     @Res() res: Response,
   ) {
-    const lot = await this.lotsService.findByLotCode(lotCode);
-
-    const traceUrl = lot.publicTraceUrl ?? this.buildTraceUrl(lotCode);
+    const traceUrl = buildGlobalTraceEntryUrl(this.configService);
     const png = await this.qrService.generatePng(traceUrl);
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Content-Disposition', `inline; filename="qr-${lotCode}.png"`);
+    res.setHeader('Content-Disposition', 'inline; filename="trace-qr-global.png"');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(png);
   }
@@ -186,7 +239,7 @@ export class LotsController {
     }
 
     const lot = await this.lotsService.findByLotCode(lotCode);
-    const traceUrl = lot.publicTraceUrl ?? this.buildTraceUrl(lotCode);
+    const traceUrl = buildGlobalTraceEntryUrl(this.configService);
 
     const brandName =
       this.configService.get<string>('labelBrandName')?.trim() || lot.product.name;
@@ -283,7 +336,7 @@ export class LotsController {
     const resolved = readiness.resolved;
     const ownerRuc = this.configService.get<string>('labelOwnerRuc')!.trim();
 
-    const traceUrl = lot.publicTraceUrl ?? this.buildTraceUrl(lotCode);
+    const traceUrl = buildGlobalTraceEntryUrl(this.configService);
     const brandName =
       this.configService.get<string>('labelBrandName')?.trim() || 'MAREA ALTA';
     const logoUrl = this.configService.get<string>('labelLogoUrl')?.trim();
@@ -409,11 +462,6 @@ export class LotsController {
       title: this.configService.get<string>('labelDefaultTitle') || undefined,
       sanitaryArcsa: this.configService.get<string>('labelArcsaNotification') || undefined,
     };
-  }
-
-  private buildTraceUrl(lotCode: string): string {
-    const base = this.configService.get<string>('frontendUrl') ?? 'http://localhost:4200';
-    return `${base.replace(/\/$/, '')}/trace/${encodeURIComponent(lotCode)}`;
   }
 
   private buildProductDescriptor(lot: {

@@ -182,6 +182,13 @@ export class RetailLabelPdfService {
       .fontSize(10)
       .fillColor(TEXT)
       .text(ctx.netWeightLine, innerX, cy, { width: innerW, align: 'center' });
+    cy = doc.y + 6;
+
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9)
+      .fillColor(BRAND)
+      .text(`LOTE: ${ctx.lotCode}`, innerX, cy, { width: innerW, align: 'center' });
     cy = doc.y + 8;
 
     const labelInfoLines = [
@@ -257,6 +264,14 @@ export class RetailLabelPdfService {
         .fontSize(4.5)
         .fillColor(MUTED)
         .text('TRAZABILIDAD', qrX, cy + TRACE_QR_SIZE + 2, { width: TRACE_QR_SIZE, align: 'center' });
+      doc
+        .font('Helvetica')
+        .fontSize(4)
+        .fillColor(MUTED)
+        .text('Ingrese código de lote', qrX, cy + TRACE_QR_SIZE + 8, {
+          width: TRACE_QR_SIZE,
+          align: 'center',
+        });
     }
 
     const textW = ctx.qrBuffer ? innerW - TRACE_QR_SIZE - 8 : innerW;
