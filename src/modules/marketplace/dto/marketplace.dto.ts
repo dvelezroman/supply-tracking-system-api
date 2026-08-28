@@ -4,6 +4,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   MaxLength,
   Min,
@@ -192,4 +193,20 @@ export class UpdateMarketplaceSettingsDto {
   @IsString()
   @MaxLength(120)
   fromName?: string | null;
+}
+
+export class AddMarketplaceImageByUrlDto {
+  @ApiProperty({
+    example: 'https://marea-alta.s3.us-east-1.amazonaws.com/landing-images/ejemplo_de_empaque.png',
+    description: 'Public HTTPS image URL (alternative to S3 upload)',
+  })
+  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
+  @MaxLength(2048)
+  url: string;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean()
+  isPrimary?: boolean;
 }

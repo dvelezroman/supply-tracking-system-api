@@ -144,7 +144,9 @@ export class MarketplaceService {
   async removeProduct(id: string) {
     const product = await this.findProductById(id);
     for (const img of product.images) {
-      await this.storage.delete(img.key).catch(() => undefined);
+      if (!img.key.startsWith('external:')) {
+        await this.storage.delete(img.key).catch(() => undefined);
+      }
     }
     return this.repo.deleteProduct(id);
   }
@@ -169,6 +171,27 @@ export class MarketplaceService {
       file.originalname,
     );
 
+    return this.attachImage(productId, uploaded.url, uploaded.key, isPrimary);
+  }
+
+  /** Register an external image URL without uploading to S3. */
+  async addImageByUrl(productId: string, url: string, isPrimary?: boolean) {
+    await this.findProductById(productId);
+    const normalized = url.trim();
+    if (!/^https?:\/\//i.test(normalized)) {
+      throw new BadRequestException('url must be an absolute http(s) URL');
+    }
+    // key prefix marks non-owned objects so delete skips storage
+    const key = `external:${normalized.slice(0, 500)}`;
+    return this.attachImage(productId, normalized, key, isPrimary);
+  }
+
+  private async attachImage(
+    productId: string,
+    url: string,
+    key: string,
+    isPrimary?: boolean,
+  ) {
     if (isPrimary) {
       await this.repo.clearPrimaryImages(productId);
     }
@@ -178,8 +201,8 @@ export class MarketplaceService {
 
     return this.repo.createImage({
       product: { connect: { id: productId } },
-      url: uploaded.url,
-      key: uploaded.key,
+      url,
+      key,
       sortOrder: product.images.length,
       isPrimary: makePrimary,
     });
@@ -191,7 +214,9 @@ export class MarketplaceService {
     if (!image || image.productId !== productId) {
       throw new NotFoundException('Image not found');
     }
-    await this.storage.delete(image.key).catch(() => undefined);
+    if (!image.key.startsWith('external:')) {
+      await this.storage.delete(image.key).catch(() => undefined);
+    }
     await this.repo.deleteImage(imageId);
     return { deleted: true };
   }

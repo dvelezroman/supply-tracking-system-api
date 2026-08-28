@@ -31,6 +31,7 @@ import {
   MarketplaceProductQueryDto,
   UpdateMarketplaceProductDto,
   UpdateMarketplaceSettingsDto,
+  AddMarketplaceImageByUrlDto,
 } from './dto/marketplace.dto';
 import { MarketplaceService } from './marketplace.service';
 
@@ -121,7 +122,7 @@ export class MarketplaceAdminController {
   }
 
   @Post('products/:id/images')
-  @ApiOperation({ summary: 'Upload product image' })
+  @ApiOperation({ summary: 'Upload product image to S3 (or local stub)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -147,6 +148,17 @@ export class MarketplaceAdminController {
     const primary =
       isPrimary === 'true' || isPrimary === '1' || isPrimary === 'yes';
     return this.marketplace.uploadImage(id, file, primary);
+  }
+
+  @Post('products/:id/images/url')
+  @ApiOperation({
+    summary: 'Add product image by public URL (no S3 upload)',
+  })
+  addImageByUrl(
+    @Param('id') id: string,
+    @Body() dto: AddMarketplaceImageByUrlDto,
+  ) {
+    return this.marketplace.addImageByUrl(id, dto.url, dto.isPrimary);
   }
 
   @Delete('products/:productId/images/:imageId')
