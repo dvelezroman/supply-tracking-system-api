@@ -849,56 +849,165 @@ async function main() {
       orderNotificationEmail: process.env.CONTACT_EMAIL?.trim() || 'pedidos@mareaalta.demo',
       fromName: 'Marea Alta Tienda',
     },
-    update: {},
+    update: {
+      storeEnabled: true,
+      fromName: 'Marea Alta Tienda',
+    },
   });
 
-  const firstTraceProduct = await prisma.product.findFirst({
-    orderBy: { createdAt: 'asc' },
-  });
+  /** Public image URLs for demo listings (no S3 upload required). */
+  const MKT_IMG = {
+    package:
+      'https://marea-alta.s3.us-east-1.amazonaws.com/landing-images/ejemplo_de_empaque.png',
+    plate:
+      'https://images.unsplash.com/photo-1627841825438-ee3e7d8febd4?auto=format&fit=crop&w=1200&q=80',
+    raw:
+      'https://images.unsplash.com/photo-1548468868-c656a1c9dad3?auto=format&fit=crop&w=1200&q=80',
+  } as const;
 
-  await prisma.marketplaceProduct.upsert({
-    where: { sku: 'MA-RETAIL-2LB' },
-    create: {
+  type MktSeed = {
+    id: string;
+    sku: string;
+    slug: string;
+    name: string;
+    description: string;
+    category: string;
+    priceCents: number;
+    stockQty: number;
+    traceSku?: string;
+    images: Array<{ id: string; url: string; isPrimary: boolean; sortOrder: number }>;
+  };
+
+  const marketplaceSeeds: MktSeed[] = [
+    {
       id: 'seed-mkt-product-001',
-      sku: 'MA-RETAIL-2LB',
-      slug: 'camaron-premium-2lb',
-      name: 'Camarón Premium 2 lb',
+      sku: 'MA-RETAIL-COLA-2LB',
+      slug: 'camaron-premium-cola-2lb',
+      name: 'Camarón Premium Cola 2 lb',
       description:
-        'Camarón Marea Alta listo para retail. Cultivo extensivo, sin atajos químicos, con trazabilidad por lote.',
+        'Camarón cola Marea Alta, IQF, presentación retail 2 lb (≈907 g). Cultivo extensivo en Ecuador, sin atajos químicos. Escanee el QR del envase para verificar el lote.',
       category: 'Retail',
       priceCents: 2499,
-      currency: 'USD',
-      stockQty: 40,
-      published: true,
-      ...(firstTraceProduct
-        ? { traceProductId: firstTraceProduct.id }
-        : {}),
+      stockQty: 48,
+      traceSku: 'CAMARON-MAREA-ALTA-COLA',
+      images: [
+        {
+          id: 'seed-mkt-img-001a',
+          url: MKT_IMG.package,
+          isPrimary: true,
+          sortOrder: 0,
+        },
+        {
+          id: 'seed-mkt-img-001b',
+          url: MKT_IMG.plate,
+          isPrimary: false,
+          sortOrder: 1,
+        },
+      ],
     },
-    update: {
-      published: true,
-      stockQty: 40,
-    },
-  });
-
-  await prisma.marketplaceProduct.upsert({
-    where: { sku: 'MA-FS-5LB' },
-    create: {
+    {
       id: 'seed-mkt-product-002',
-      sku: 'MA-FS-5LB',
-      slug: 'camaron-food-service-5lb',
-      name: 'Camarón Food Service 5 lb',
+      sku: 'MA-RETAIL-IQF-340G',
+      slug: 'camaron-iqf-bandeja-340g',
+      name: 'Camarón IQF bandeja 340 g',
       description:
-        'Presentación para restaurantes y food service. Cadena de frío y empaque IQF.',
-      category: 'Food Service',
-      priceCents: 5499,
-      currency: 'USD',
-      stockQty: 25,
-      published: true,
+        'Bandeja retail lista para góndola (340 g). Ideal para hogar: descongelar y cocinar. Trazabilidad por lote desde la granja hasta el empaque.',
+      category: 'Retail',
+      priceCents: 1299,
+      stockQty: 120,
+      traceSku: 'CAMARON-RETAIL-IQF-340G',
+      images: [
+        {
+          id: 'seed-mkt-img-002a',
+          url: MKT_IMG.raw,
+          isPrimary: true,
+          sortOrder: 0,
+        },
+        {
+          id: 'seed-mkt-img-002b',
+          url: MKT_IMG.package,
+          isPrimary: false,
+          sortOrder: 1,
+        },
+      ],
     },
-    update: {
-      published: true,
+    {
+      id: 'seed-mkt-product-003',
+      sku: 'MA-RETAIL-BUTTERFLY-1LB',
+      slug: 'camaron-butterfly-1lb',
+      name: 'Camarón Butterfly IQF 1 lb',
+      description:
+        'Corte mariposa IQF, 1 lb. Presentación retail para parrilla o salteados. Producto Marea Alta con cadena de frío y origen verificable.',
+      category: 'Retail',
+      priceCents: 1899,
+      stockQty: 60,
+      traceSku: 'CAMARON-BUTTERFLY-IQF',
+      images: [
+        {
+          id: 'seed-mkt-img-003a',
+          url: MKT_IMG.plate,
+          isPrimary: true,
+          sortOrder: 0,
+        },
+      ],
     },
-  });
+  ];
+
+  // Remove older marketplace demo SKUs if present (idempotent cleanup).
+  for (const legacySku of ['MA-RETAIL-2LB', 'MA-FS-5LB']) {
+    await prisma.marketplaceProduct.deleteMany({ where: { sku: legacySku } });
+  }
+
+  for (const m of marketplaceSeeds) {
+    const traceId = m.traceSku ? products[m.traceSku]?.id : undefined;
+    const listing = await prisma.marketplaceProduct.upsert({
+      where: { sku: m.sku },
+      create: {
+        id: m.id,
+        sku: m.sku,
+        slug: m.slug,
+        name: m.name,
+        description: m.description,
+        category: m.category,
+        priceCents: m.priceCents,
+        currency: 'USD',
+        stockQty: m.stockQty,
+        published: true,
+        ...(traceId ? { traceProductId: traceId } : {}),
+      },
+      update: {
+        name: m.name,
+        slug: m.slug,
+        description: m.description,
+        category: m.category,
+        priceCents: m.priceCents,
+        stockQty: m.stockQty,
+        published: true,
+        ...(traceId ? { traceProductId: traceId } : {}),
+      },
+    });
+
+    for (const img of m.images) {
+      await prisma.marketplaceProductImage.upsert({
+        where: { id: img.id },
+        create: {
+          id: img.id,
+          productId: listing.id,
+          url: img.url,
+          key: `external:${img.url.slice(0, 500)}`,
+          isPrimary: img.isPrimary,
+          sortOrder: img.sortOrder,
+        },
+        update: {
+          url: img.url,
+          key: `external:${img.url.slice(0, 500)}`,
+          isPrimary: img.isPrimary,
+          sortOrder: img.sortOrder,
+          productId: listing.id,
+        },
+      });
+    }
+  }
 
   console.log('\nSeed completo (upserts only).');
   console.log('  Cuentas demo:');
@@ -910,7 +1019,10 @@ async function main() {
     const n = await prisma.lot.count({ where: { product: { sku: def.sku } } });
     console.log(`    · ${def.sku}: ${n} lote(s)`);
   }
-  console.log('  Marketplace: MA-RETAIL-2LB, MA-FS-5LB (publicados)');
+  console.log('  Marketplace retail (publicados):');
+  for (const m of marketplaceSeeds) {
+    console.log(`    · ${m.sku} — ${m.name} ($${ (m.priceCents / 100).toFixed(2) }, stock ${m.stockQty})`);
+  }
   console.log(`  Lotes totales: ${lots.length} (${lots.map((l) => l.lotCode).join(', ')})`);
   console.log(
     '  QR único de trazabilidad →',
