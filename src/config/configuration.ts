@@ -30,4 +30,18 @@ export default () => ({
     secret: process.env.JWT_SECRET || 'default-secret-change-in-production',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
+  aws: {
+    region: process.env.AWS_REGION?.trim() || 'us-east-1',
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID?.trim() || '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY?.trim() || '',
+    s3Bucket: process.env.S3_BUCKET?.trim() || '',
+    s3PublicBaseUrl: process.env.S3_PUBLIC_BASE_URL?.trim() || '',
+  },
+  smtp: {
+    host: process.env.SMTP_HOST?.trim() || '',
+    port: parseInt(process.env.SMTP_PORT ?? '587', 10) || 587,
+    user: process.env.SMTP_USER?.trim() || '',
+    pass: process.env.SMTP_PASS?.trim() || '',
+    from: process.env.SMTP_FROM?.trim() || '',
+  },
 });

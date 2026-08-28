@@ -51,15 +51,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
       );
     }
 
+    const responseBody =
+      typeof message === 'object' && message !== null
+        ? (message as Record<string, unknown>)
+        : null;
+
     response.status(status).json({
       success: false,
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
       message:
-        typeof message === 'object' && 'message' in (message as object)
-          ? (message as any).message
+        responseBody && 'message' in responseBody
+          ? responseBody.message
           : message,
+      ...(responseBody && 'details' in responseBody
+        ? { details: responseBody.details }
+        : {}),
     });
   }
 }

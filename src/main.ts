@@ -1,6 +1,8 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
@@ -50,11 +52,15 @@ function corsOriginOption():
 async function bootstrap() {
   assertProductionEnv();
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   const apiPrefix = process.env.API_PREFIX ?? 'api';
   const apiVersion = process.env.API_VERSION ?? 'v0';
   const globalPrefix = `${apiPrefix}/${apiVersion}`;
+
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads',
+  });
 
   app.setGlobalPrefix(globalPrefix);
 

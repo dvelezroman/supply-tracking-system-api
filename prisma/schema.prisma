@@ -133,11 +133,115 @@ model Product {
   labelSanitaryArcsa   String?
 
   lots Lot[]
+  marketplaceListings MarketplaceProduct[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("products")
+}
+
+enum MarketplaceOrderStatus {
+  PENDING
+  EMAILED
+  CANCELLED
+}
+
+/// Commercial store listing (separate from supply-chain Product catalogue).
+model MarketplaceProduct {
+  id             String  @id @default(uuid())
+  sku            String  @unique
+  slug           String  @unique
+  name           String
+  description    String?
+  category       String?
+  priceCents     Int
+  currency       String  @default("USD")
+  stockQty       Int     @default(0)
+  published      Boolean @default(false)
+  /// Optional link to supply-chain Product for traceability context.
+  traceProductId String?
+  traceProduct   Product? @relation(fields: [traceProductId], references: [id], onDelete: SetNull)
+
+  images MarketplaceProductImage[]
+  orderItems MarketplaceOrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published])
+  @@index([category])
+  @@index([traceProductId])
+  @@map("marketplace_products")
+}
+
+model MarketplaceProductImage {
+  id        String @id @default(uuid())
+  productId String
+  product   MarketplaceProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  /// Storage object key (S3 key or local relative path).
+  key       String
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+  @@map("marketplace_product_images")
+}
+
+model MarketplaceOrder {
+  id             String                 @id @default(uuid())
+  orderNumber    String                 @unique
+  status         MarketplaceOrderStatus @default(PENDING)
+  customerName   String
+  customerEmail  String
+  customerPhone  String?
+  customerAddress String?
+  notes          String?
+  subtotalCents  Int
+  currency       String                 @default("USD")
+  /// Set when email send failed (SMTP missing or transport error).
+  emailError     String?
+
+  items MarketplaceOrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("marketplace_orders")
+}
+
+model MarketplaceOrderItem {
+  id             String  @id @default(uuid())
+  orderId        String
+  order          MarketplaceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId      String?
+  product        MarketplaceProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name           String
+  sku            String
+  unitPriceCents Int
+  qty            Int
+  imageUrl       String?
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("marketplace_order_items")
+}
+
+/// Singleton marketplace settings (id = "default").
+model MarketplaceSettings {
+  id                     String  @id @default("default")
+  orderNotificationEmail String?
+  storeEnabled           Boolean @default(true)
+  fromName               String?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("marketplace_settings")
 }
 
 /// A production batch (lote). One Product can have many Lots.

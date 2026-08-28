@@ -841,6 +841,65 @@ async function main() {
     }
   }
 
+  await prisma.marketplaceSettings.upsert({
+    where: { id: 'default' },
+    create: {
+      id: 'default',
+      storeEnabled: true,
+      orderNotificationEmail: process.env.CONTACT_EMAIL?.trim() || 'pedidos@mareaalta.demo',
+      fromName: 'Marea Alta Tienda',
+    },
+    update: {},
+  });
+
+  const firstTraceProduct = await prisma.product.findFirst({
+    orderBy: { createdAt: 'asc' },
+  });
+
+  await prisma.marketplaceProduct.upsert({
+    where: { sku: 'MA-RETAIL-2LB' },
+    create: {
+      id: 'seed-mkt-product-001',
+      sku: 'MA-RETAIL-2LB',
+      slug: 'camaron-premium-2lb',
+      name: 'Camarón Premium 2 lb',
+      description:
+        'Camarón Marea Alta listo para retail. Cultivo extensivo, sin atajos químicos, con trazabilidad por lote.',
+      category: 'Retail',
+      priceCents: 2499,
+      currency: 'USD',
+      stockQty: 40,
+      published: true,
+      ...(firstTraceProduct
+        ? { traceProductId: firstTraceProduct.id }
+        : {}),
+    },
+    update: {
+      published: true,
+      stockQty: 40,
+    },
+  });
+
+  await prisma.marketplaceProduct.upsert({
+    where: { sku: 'MA-FS-5LB' },
+    create: {
+      id: 'seed-mkt-product-002',
+      sku: 'MA-FS-5LB',
+      slug: 'camaron-food-service-5lb',
+      name: 'Camarón Food Service 5 lb',
+      description:
+        'Presentación para restaurantes y food service. Cadena de frío y empaque IQF.',
+      category: 'Food Service',
+      priceCents: 5499,
+      currency: 'USD',
+      stockQty: 25,
+      published: true,
+    },
+    update: {
+      published: true,
+    },
+  });
+
   console.log('\nSeed completo (upserts only).');
   console.log('  Cuentas demo:');
   console.log('    · admin@supply.com / admin123 (ADMIN)');
@@ -851,6 +910,7 @@ async function main() {
     const n = await prisma.lot.count({ where: { product: { sku: def.sku } } });
     console.log(`    · ${def.sku}: ${n} lote(s)`);
   }
+  console.log('  Marketplace: MA-RETAIL-2LB, MA-FS-5LB (publicados)');
   console.log(`  Lotes totales: ${lots.length} (${lots.map((l) => l.lotCode).join(', ')})`);
   console.log(
     '  QR único de trazabilidad →',
