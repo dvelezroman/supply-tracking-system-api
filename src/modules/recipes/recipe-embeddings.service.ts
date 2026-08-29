@@ -289,23 +289,33 @@ export class RecipeEmbeddingsService implements OnModuleInit {
     return filtered;
   }
 
-  async chatCompletion(system: string, user: string): Promise<string> {
+  async chatCompletion(
+    system: string,
+    user: string,
+    opts?: { maxTokens?: number },
+  ): Promise<string> {
     if (!this.openai) {
       throw new Error('OPENAI_API_KEY is not configured');
     }
     const model = this.chatModel();
+    const maxTokens = opts?.maxTokens ?? 180;
     const t0 = Date.now();
     this.logger.debug(
-      `[AI] chat.completions.create model=${model} userChars=${user.length}`,
+      `[AI] chat.completions.create model=${model} userChars=${user.length} maxTokens=${maxTokens}`,
     );
     try {
-      // gpt-5.x reasoning models only accept default temperature (1); omit param
+      // gpt-5 / o-series: max_completion_tokens; classic chat: max_tokens.
+      // Omit temperature — reasoning models reject non-default values.
+      const isReasoning = /^(gpt-5|o\d)/i.test(model);
       const res = await this.openai.chat.completions.create({
         model,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },
         ],
+        ...(isReasoning
+          ? { max_completion_tokens: maxTokens }
+          : { max_tokens: maxTokens }),
       });
       const content = res.choices[0]?.message?.content?.trim() || '';
       const usage = res.usage;
