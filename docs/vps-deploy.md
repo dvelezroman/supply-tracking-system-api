@@ -17,7 +17,7 @@ Chroma healthy → Postgres healthy → migrate → API (OPENAI + CHROMA_URL) �
 
 ## 2. Variables de entorno (`api/.env`)
 
-Copia desde [`.env.example`](../.env.example) y completa:
+Copia desde `[.env.example](../.env.example)` y completa:
 
 ```bash
 NODE_ENV=production
@@ -84,18 +84,24 @@ Solo Chroma (si Postgres ya existe fuera de compose):
 docker compose up -d chromadb
 ```
 
-Imágenes actuales en [`docker-compose.yml`](../docker-compose.yml):
+Imágenes actuales en `[docker-compose.yml](../docker-compose.yml)`:
 
-| Servicio   | Imagen                    | Puerto host |
-|-----------|---------------------------|-------------|
-| postgres  | `postgres:16-alpine`      | `5432`      |
-| chromadb  | `chromadb/chroma:1.0.0`   | `8000`      |
+
+| Servicio | Imagen                  | Puerto host |
+| -------- | ----------------------- | ----------- |
+| postgres | `postgres:16-alpine`    | `5432`      |
+| chromadb | `chromadb/chroma:1.0.0` | `8000`      |
+
+
+
 
 ### Firewall
 
 - **No** publiques `8000` (Chroma) ni `5432` (Postgres) a Internet.
 - Solo `80`/`443` del reverse proxy (y SSH).
 - Chroma y Postgres deben ser alcanzables solo desde localhost o la red Docker interna.
+
+
 
 ## 4. Migraciones (y seed opcional)
 
@@ -156,7 +162,7 @@ npm run build
 
 Sirve `web/dist/supply-tracking-web` (o la carpeta que genere el build) con nginx/Caddy.
 
-Asegura que [`environment.prod.ts`](../../web/src/environments/environment.prod.ts) apunte a la URL pública de la API (`apiBase`).
+Asegura que `[environment.prod.ts](../../web/src/environments/environment.prod.ts)` apunte a la URL pública de la API (`apiBase`).
 
 ## 7. Activar RAG (recetas + Mary)
 
@@ -167,37 +173,44 @@ Con `OPENAI_API_KEY` y Chroma ya arriba:
 3. En cada publicada: **Reindexar en Chroma** (icono psychology), o confía en el index automático al publicar.
 4. Prueba Mary en la landing (pregunta libre, p.ej. “ceviche de camarón”).
 5. Endpoints útiles:
-   - `GET /api/v0/public/recipes?q=ceviche`
-   - `POST /api/v0/public/chat` body `{ "message": "..." }`
-   - Admin: `POST /api/v0/recipes/admin/:id/reindex` (Bearer JWT)
+  - `GET /api/v0/public/recipes?q=ceviche`
+  - `POST /api/v0/public/chat` body `{ "message": "..." }`
+  - Admin: `POST /api/v0/recipes/admin/:id/reindex` (Bearer JWT)
 
 Sin `OPENAI_API_KEY`, search/likes/admin funcionan; el chat responde fallback y el embed se omite.
 
 ## 8. Checklist post-deploy
 
-- [ ] `docker compose ps` → postgres + chromadb healthy  
-- [ ] `npm run db:migrate:prod` (o `./scripts/migrate-prod.sh`) sin errores  
-- [ ] `GET /api/v0/health` → 200  
-- [ ] `GET /api/v0/public/recipes` → lista  
-- [ ] Login admin + `/recipes/list`  
-- [ ] Publish/reindex con OpenAI (sin WARN “OPENAI_API_KEY missing” en logs)  
+- [x] `docker compose ps` → postgres + chromadb healthy  
+- [x] `npm run db:migrate:prod` (o `./scripts/migrate-prod.sh`) sin errores  
+- [x] `GET /api/v0/health` → 200  
+- [x] `GET /api/v0/public/recipes` → lista  
+- [x] Login admin + `/recipes/list`  
+- [x] Publish/reindex con OpenAI (sin WARN “OPENAI_API_KEY missing” en logs)  
 - [ ] `POST /api/v0/public/chat` → `ragEnabled: true` y `recipeRefs`  
 - [ ] Web producción carga tienda / recetas / Mary  
 - [ ] Puertos 5432 y 8000 no abiertos al mundo  
 
+
+
 ## 9. Troubleshooting rápido
 
-| Síntoma | Qué mirar |
-|---------|-----------|
-| API no arranca en prod | `JWT_SECRET`, `DATABASE_URL`, `NODE_ENV=production` |
-| `Can't reach database` | host en `DATABASE_URL` (`postgres` vs `127.0.0.1`), compose up |
-| Chroma “not ready” / KeyError | imagen `chromadb/chroma:1.0.0`+ (cliente JS 3.x); `CHROMA_URL` |
-| Chat sin RAG | `OPENAI_API_KEY`; reindex; colección `marea_recipe_chunks` |
-| CORS | `FRONTEND_URL` / `CORS_ORIGIN` = origen exacto del front |
+
+| Síntoma                                | Qué mirar                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| API no arranca en prod                 | `JWT_SECRET`, `DATABASE_URL`, `NODE_ENV=production`                             |
+| `Can't reach database`                 | host en `DATABASE_URL` (`postgres` vs `127.0.0.1`), compose up                  |
+| Chroma “not ready” / KeyError          | imagen `chromadb/chroma:1.0.0`+ (cliente JS 3.x); `CHROMA_URL`                  |
+| Chat sin RAG                           | `OPENAI_API_KEY`; reindex; colección `marea_recipe_chunks`                      |
+| CORS                                   | `FRONTEND_URL` / `CORS_ORIGIN` = origen exacto del front                        |
 | Volumen Postgres “role does not exist” | volumen viejo con otro user → recrear volumen solo si es aceptable perder datos |
+
+
+
 
 ## Referencias
 
-- Compose: [`api/docker-compose.yml`](../docker-compose.yml)
-- Env ejemplo: [`api/.env.example`](../.env.example)
-- Notas cortas: [`api/README.md`](../README.md) (sección Production notes)
+- Compose: `[api/docker-compose.yml](../docker-compose.yml)`
+- Env ejemplo: `[api/.env.example](../.env.example)`
+- Notas cortas: `[api/README.md](../README.md)` (sección Production notes)
+

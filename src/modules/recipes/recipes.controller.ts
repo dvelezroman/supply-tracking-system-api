@@ -98,7 +98,7 @@ export class RecipeChatController {
   @Post()
   @ApiOperation({ summary: 'Mary RAG chat over published recipes' })
   ask(@Body() dto: ChatMessageDto) {
-    return this.chat.chat(dto.message);
+    return this.chat.chat(dto.message, dto.lang ?? 'es');
   }
 }
 

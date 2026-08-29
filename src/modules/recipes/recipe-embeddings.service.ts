@@ -34,11 +34,27 @@ export class RecipeEmbeddingsService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    await this.ensureCollection().catch((err) => {
-      this.logger.warn(
-        `ChromaDB not ready yet (${err instanceof Error ? err.message : err}). RAG indexing deferred until Chroma is up.`,
+    if (this.openai) {
+      this.logger.log(
+        `[AI] OpenAI ready — chat=${this.chatModel()} embed=${this.embedModel()}`,
       );
-    });
+    } else {
+      this.logger.warn(
+        '[AI] OPENAI_API_KEY missing — Mary chat + recipe indexing disabled',
+      );
+    }
+
+    await this.ensureCollection()
+      .then((col) => {
+        this.logger.log(
+          `[AI] Chroma connected — ${this.chromaUrl()} collection=${col.name}`,
+        );
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `[AI] ChromaDB not ready yet (${err instanceof Error ? err.message : err}). RAG indexing deferred until Chroma is up.`,
+        );
+      });
   }
 
   isConfigured(): boolean {
@@ -101,72 +117,118 @@ export class RecipeEmbeddingsService implements OnModuleInit {
     if (!this.openai) {
       throw new Error('OPENAI_API_KEY is not configured');
     }
-    const res = await this.openai.embeddings.create({
-      model: this.embedModel(),
-      input: texts,
-    });
-    return res.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+    const model = this.embedModel();
+    const t0 = Date.now();
+    this.logger.debug(
+      `[AI] embeddings.create model=${model} texts=${texts.length}`,
+    );
+    try {
+      const res = await this.openai.embeddings.create({
+        model,
+        input: texts,
+      });
+      this.logger.debug(
+        `[AI] embeddings.create ok in ${Date.now() - t0}ms (${res.data.length} vectors)`,
+      );
+      return res.data
+        .sort((a, b) => a.index - b.index)
+        .map((d) => d.embedding);
+    } catch (err) {
+      this.logger.error(
+        `[AI] embeddings.create failed after ${Date.now() - t0}ms model=${model}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 
   async indexRecipe(recipeId: string): Promise<void> {
     const recipe = await this.recipes.findById(recipeId);
-    if (!recipe) return;
+    if (!recipe) {
+      this.logger.warn(`[AI] indexRecipe skipped — recipe ${recipeId} not found`);
+      return;
+    }
+
+    this.logger.log(
+      `[AI] indexRecipe start slug=${recipe.slug} status=${recipe.status}`,
+    );
 
     // Always clear previous Chroma docs for this recipe
-    await this.deleteRecipeFromChroma(recipeId).catch(() => undefined);
+    await this.deleteRecipeFromChroma(recipeId).catch((err) => {
+      this.logger.warn(
+        `[AI] Chroma delete before reindex failed for ${recipe.slug}: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    });
     await this.recipes.deleteChunks(recipeId);
 
     if (recipe.status !== RecipeStatus.PUBLISHED) {
+      this.logger.log(
+        `[AI] indexRecipe skip embed — ${recipe.slug} is ${recipe.status} (chunks cleared)`,
+      );
       return;
     }
     if (!this.openai) {
       this.logger.warn(
-        `Skip embed for ${recipe.slug}: OPENAI_API_KEY missing`,
+        `[AI] Skip embed for ${recipe.slug}: OPENAI_API_KEY missing`,
       );
       return;
     }
 
     const chunks = chunkRecipeForEmbed(recipe);
-    if (!chunks.length) return;
-
-    const embeddings = await this.embedTexts(chunks.map((c) => c.content));
-    const collection = await this.ensureCollection();
-
-    const ids: string[] = [];
-    const documents: string[] = [];
-    const metadatas: Record<string, string | number | boolean>[] = [];
-    const embeddingsPayload: number[][] = [];
-
-    for (let i = 0; i < chunks.length; i++) {
-      const row = await this.recipes.createChunkRow({
-        recipeId,
-        chunkIndex: chunks[i].chunkIndex,
-        content: chunks[i].content,
-      });
-      await this.recipes.setChunkChromaId(row.id, row.id);
-      ids.push(row.id);
-      documents.push(chunks[i].content);
-      embeddingsPayload.push(embeddings[i]);
-      metadatas.push({
-        recipeId,
-        slug: recipe.slug,
-        name: recipe.name,
-        category: recipe.category ?? '',
-        chunkIndex: chunks[i].chunkIndex,
-        status: recipe.status,
-      });
+    if (!chunks.length) {
+      this.logger.warn(`[AI] indexRecipe — no chunks for ${recipe.slug}`);
+      return;
     }
 
-    await collection.upsert({
-      ids,
-      documents,
-      embeddings: embeddingsPayload,
-      metadatas,
-    });
+    const t0 = Date.now();
+    try {
+      const embeddings = await this.embedTexts(chunks.map((c) => c.content));
+      const collection = await this.ensureCollection();
 
-    this.logger.log(
-      `Indexed ${chunks.length} chunks in Chroma for recipe ${recipe.slug}`,
-    );
+      const ids: string[] = [];
+      const documents: string[] = [];
+      const metadatas: Record<string, string | number | boolean>[] = [];
+      const embeddingsPayload: number[][] = [];
+
+      for (let i = 0; i < chunks.length; i++) {
+        const row = await this.recipes.createChunkRow({
+          recipeId,
+          chunkIndex: chunks[i].chunkIndex,
+          content: chunks[i].content,
+        });
+        await this.recipes.setChunkChromaId(row.id, row.id);
+        ids.push(row.id);
+        documents.push(chunks[i].content);
+        embeddingsPayload.push(embeddings[i]);
+        metadatas.push({
+          recipeId,
+          slug: recipe.slug,
+          name: recipe.name,
+          category: recipe.category ?? '',
+          chunkIndex: chunks[i].chunkIndex,
+          status: recipe.status,
+        });
+      }
+
+      await collection.upsert({
+        ids,
+        documents,
+        embeddings: embeddingsPayload,
+        metadatas,
+      });
+
+      this.logger.log(
+        `[AI] Indexed ${chunks.length} chunks in Chroma for ${recipe.slug} in ${Date.now() - t0}ms`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `[AI] indexRecipe failed for ${recipe.slug} after ${Date.now() - t0}ms`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 
   async deleteRecipeFromChroma(recipeId: string): Promise<void> {
@@ -174,18 +236,27 @@ export class RecipeEmbeddingsService implements OnModuleInit {
     await collection.delete({
       where: { recipeId },
     });
+    this.logger.debug(`[AI] Chroma delete recipeId=${recipeId}`);
   }
 
   async retrieve(query: string, limit = 5): Promise<RetrievedChunk[]> {
-    if (!this.openai) return [];
+    if (!this.openai) {
+      this.logger.debug('[AI] retrieve skipped — OpenAI not configured');
+      return [];
+    }
     let collection: Collection;
     try {
       collection = await this.ensureCollection();
-    } catch {
-      this.logger.warn('Chroma unavailable for retrieve');
+    } catch (err) {
+      this.logger.warn(
+        `[AI] Chroma unavailable for retrieve: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
       return [];
     }
 
+    const t0 = Date.now();
     const [embedding] = await this.embedTexts([query]);
     const result = await collection.query({
       queryEmbeddings: [embedding],
@@ -211,21 +282,47 @@ export class RecipeEmbeddingsService implements OnModuleInit {
         category: meta.category ? String(meta.category) : null,
       });
     }
-    return out.filter((r) => r.slug && r.content);
+    const filtered = out.filter((r) => r.slug && r.content);
+    this.logger.debug(
+      `[AI] Chroma query in ${Date.now() - t0}ms — raw=${ids.length} kept=${filtered.length}`,
+    );
+    return filtered;
   }
 
   async chatCompletion(system: string, user: string): Promise<string> {
     if (!this.openai) {
       throw new Error('OPENAI_API_KEY is not configured');
     }
-    const res = await this.openai.chat.completions.create({
-      model: this.chatModel(),
-      temperature: 0.4,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-    });
-    return res.choices[0]?.message?.content?.trim() || '';
+    const model = this.chatModel();
+    const t0 = Date.now();
+    this.logger.debug(
+      `[AI] chat.completions.create model=${model} userChars=${user.length}`,
+    );
+    try {
+      const res = await this.openai.chat.completions.create({
+        model,
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+      });
+      const content = res.choices[0]?.message?.content?.trim() || '';
+      const usage = res.usage;
+      this.logger.log(
+        `[AI] chat.completions ok in ${Date.now() - t0}ms model=${model}` +
+          (usage
+            ? ` tokens in=${usage.prompt_tokens} out=${usage.completion_tokens} total=${usage.total_tokens}`
+            : '') +
+          ` finish=${res.choices[0]?.finish_reason ?? '?'}`,
+      );
+      return content;
+    } catch (err) {
+      this.logger.error(
+        `[AI] chat.completions failed after ${Date.now() - t0}ms model=${model}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 }

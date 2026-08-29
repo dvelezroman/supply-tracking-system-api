@@ -5,6 +5,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -325,6 +326,12 @@ export class ChatMessageDto {
   @IsString()
   @MaxLength(80)
   sessionId?: string;
+
+  /** UI language toggle (`en` | `es`). Controls Mary reply language. */
+  @ApiPropertyOptional({ enum: ['es', 'en'], default: 'es' })
+  @IsOptional()
+  @IsIn(['es', 'en'])
+  lang?: 'es' | 'en';
 }
 
 export class SetRecipeStatusDto {
