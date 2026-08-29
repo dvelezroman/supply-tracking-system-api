@@ -299,9 +299,9 @@ export class RecipeEmbeddingsService implements OnModuleInit {
       `[AI] chat.completions.create model=${model} userChars=${user.length}`,
     );
     try {
+      // gpt-5.x reasoning models only accept default temperature (1); omit param
       const res = await this.openai.chat.completions.create({
         model,
-        temperature: 0.4,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },
