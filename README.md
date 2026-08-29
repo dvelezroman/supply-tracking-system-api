@@ -4,7 +4,7 @@ NestJS REST API for supply-chain traceability: products, production lots, actors
 
 ## Prerequisites
 
-- Node.js 20+ (recommended)
+- Node.js 22+ (required; `openai@7` engine)
 - PostgreSQL 14+
 - npm
 

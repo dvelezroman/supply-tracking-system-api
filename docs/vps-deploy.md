@@ -11,7 +11,7 @@ Chroma healthy → Postgres healthy → migrate → API (OPENAI + CHROMA_URL) �
 ## 1. Requisitos en el VPS
 
 - Docker + Docker Compose plugin
-- Node.js 20+ (si la API corre en el host; opcional si usas solo contenedores)
+- Node.js 22+ (requerido por `openai@7`; si la API corre en el host; opcional si usas solo contenedores)
 - Dominio / reverse proxy (nginx o Caddy) con TLS
 - Archivo `api/.env` de producción (nunca commitear secretos)
 
