@@ -8,6 +8,9 @@ const logger = new Logger('LabelLogoUtil');
 /** Bundled Marea Alta logo used when LABEL_LOGO_URL is missing or unreachable. */
 export const DEFAULT_LABEL_LOGO_FALLBACK = join(__dirname, '..', '..', 'assets', 'marea-alta-logo.png');
 
+/** Bundled BitFlow logo used when BITFLOW_LOGO_URL is missing or unreachable. */
+export const DEFAULT_BITFLOW_LOGO_FALLBACK = join(__dirname, '..', '..', 'assets', 'bitflow-logo.png');
+
 export async function fetchLabelLogo(
   url?: string,
   useDefaultFallback = true,
@@ -16,6 +19,12 @@ export async function fetchLabelLogo(
   if (primary) return primary;
   if (!useDefaultFallback) return null;
   return loadLogoFromFile(DEFAULT_LABEL_LOGO_FALLBACK);
+}
+
+export async function fetchBitflowLogo(url?: string): Promise<Buffer | null> {
+  const primary = await fetchLabelLogoPrimary(url);
+  if (primary) return primary;
+  return loadLogoFromFile(DEFAULT_BITFLOW_LOGO_FALLBACK);
 }
 
 async function fetchLabelLogoPrimary(url?: string): Promise<Buffer | null> {

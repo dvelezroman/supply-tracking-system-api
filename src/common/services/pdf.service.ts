@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as PDFDocument from 'pdfkit';
 import { QrService } from './qr.service';
-import { fetchLabelLogo } from '../label/label-logo.util';
+import { fetchBitflowLogo, fetchLabelLogo } from '../label/label-logo.util';
 import {
   buildLabelElaborationLine,
   buildLabelExpirationLine,
@@ -117,12 +117,11 @@ export class PdfService {
     const layout = opts.layout ?? 'grid';
     const logoSource = opts.logoUrl ?? this.configService.get<string>('labelLogoUrl') ?? '';
     const bitflowLogoSource = this.configService.get<string>('bitflowLogoUrl') ?? '';
-    const bitflowSiteUrl = this.configService.get<string>('bitflowSiteUrl')?.trim() || 'bitflow.bid';
     const [qrBuffer, barcodeBuffer, logoBuffer, bitflowLogoBuffer] = await Promise.all([
       this.qrService.generatePngForPdfLabel(url, layout === 'fullPage' ? 640 : 400),
       this.buildBarcode(opts.lotCode, layout === 'fullPage' ? 3 : 2),
       fetchLabelLogo(logoSource),
-      fetchLabelLogo(bitflowLogoSource, false),
+      fetchBitflowLogo(bitflowLogoSource),
     ]);
 
     const renderCtx = {
@@ -131,7 +130,6 @@ export class PdfService {
       barcodeBuffer,
       logoBuffer,
       bitflowLogoBuffer,
-      bitflowSiteUrl,
     };
 
     return new Promise((resolve, reject) => {
@@ -176,11 +174,10 @@ export class PdfService {
     const layout = opts.layout ?? 'grid';
     const logoSource = opts.logoUrl ?? this.configService.get<string>('labelLogoUrl') ?? '';
     const bitflowLogoSource = this.configService.get<string>('bitflowLogoUrl') ?? '';
-    const bitflowSiteUrl = this.configService.get<string>('bitflowSiteUrl')?.trim() || 'bitflow.bid';
     const [qrBuffer, logoBuffer, bitflowLogoBuffer] = await Promise.all([
       this.qrService.generatePngForPdfLabel(url, layout === 'fullPage' ? 640 : 400),
       fetchLabelLogo(logoSource),
-      fetchLabelLogo(bitflowLogoSource, false),
+      fetchBitflowLogo(bitflowLogoSource),
     ]);
 
     return new Promise((resolve, reject) => {
@@ -200,7 +197,6 @@ export class PdfService {
           qrBuffer,
           logoBuffer,
           bitflowLogoBuffer,
-          bitflowSiteUrl,
         });
       };
 
@@ -237,7 +233,6 @@ export class PdfService {
       qrBuffer: Buffer;
       logoBuffer: Buffer | null;
       bitflowLogoBuffer: Buffer | null;
-      bitflowSiteUrl: string;
     },
   ): void {
     const s = cellW / LABEL_W;
@@ -319,7 +314,6 @@ export class PdfService {
       barcodeBuffer: Buffer;
       logoBuffer: Buffer | null;
       bitflowLogoBuffer: Buffer | null;
-      bitflowSiteUrl: string;
     },
   ): void {
     const { qrBuffer, barcodeBuffer, logoBuffer, bitflowLogoBuffer } = ctx;
@@ -538,7 +532,7 @@ export class PdfService {
       rightY = doc.y + (2 + vGap * 0.5) * s;
     }
 
-    const footerH = 20 * s;
+    const footerH = 14 * s;
     const footerY = innerY + innerH - footerH;
     const footerW = innerW - pad * 2;
     const footerX = innerX + pad;
@@ -551,10 +545,11 @@ export class PdfService {
 
     if (bitflowLogoBuffer) {
       try {
-        const logoW = 24 * s;
+        const logoW = 36 * s;
+        const logoH = 10 * s;
         const logoX = footerX + (footerW - logoW) / 2;
         doc.image(bitflowLogoBuffer, logoX, footerY, {
-          fit: [logoW, 8 * s],
+          fit: [logoW, logoH],
           align: 'center',
           valign: 'center',
         });
@@ -563,7 +558,7 @@ export class PdfService {
           .font('Helvetica-Bold')
           .fontSize(5 * s)
           .fillColor(MUTED)
-          .text('BITFLOW', footerX, footerY + 1.5 * s, {
+          .text('BITFLOW', footerX, footerY + 2 * s, {
             width: footerW,
             align: 'center',
           });
@@ -573,32 +568,17 @@ export class PdfService {
         .font('Helvetica-Bold')
         .fontSize(5 * s)
         .fillColor(MUTED)
-        .text('BITFLOW', footerX, footerY + 1.5 * s, {
+        .text('BITFLOW', footerX, footerY + 2 * s, {
           width: footerW,
           align: 'center',
         });
     }
-
-    doc
-      .font('Helvetica')
-      .fontSize(4.4 * s)
-      .fillColor(MUTED)
-      .text(this.cleanDisplayUrl(ctx.bitflowSiteUrl), footerX, footerY + 9 * s, {
-        width: footerW,
-        align: 'center',
-      });
   }
 
   private truncate(s: string, max: number): string {
     const t = s.trim();
     if (t.length <= max) return t;
     return `${t.slice(0, max - 1)}…`;
-  }
-
-  private cleanDisplayUrl(input: string): string {
-    const trimmed = input.trim();
-    if (!trimmed) return 'bitflow.bid';
-    return trimmed.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
   }
 
   private drawLogoPlaceholder(
