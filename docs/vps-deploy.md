@@ -102,13 +102,21 @@ Imágenes actuales en [`docker-compose.yml`](../docker-compose.yml):
 ```bash
 cd api
 npm ci
-npx prisma migrate deploy
+npm run db:migrate:prod
+# equivalente: ./scripts/migrate-prod.sh
+# (prisma generate + prisma migrate deploy)
 ```
 
 Primera instalación / datos demo (opcional):
 
 ```bash
 npm run prisma:seed
+```
+
+Solo migraciones (sin regenerate):
+
+```bash
+npm run prisma:migrate:prod
 ```
 
 El seed incluye ~19 recetas de camarón en estado `PUBLISHED` (aún sin embeddings hasta reindex con OpenAI).
@@ -168,7 +176,7 @@ Sin `OPENAI_API_KEY`, search/likes/admin funcionan; el chat responde fallback y 
 ## 8. Checklist post-deploy
 
 - [ ] `docker compose ps` → postgres + chromadb healthy  
-- [ ] `prisma migrate deploy` sin errores  
+- [ ] `npm run db:migrate:prod` (o `./scripts/migrate-prod.sh`) sin errores  
 - [ ] `GET /api/v0/health` → 200  
 - [ ] `GET /api/v0/public/recipes` → lista  
 - [ ] Login admin + `/recipes/list`  
