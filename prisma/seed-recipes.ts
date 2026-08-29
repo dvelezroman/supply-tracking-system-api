@@ -13,6 +13,8 @@ type SeedRecipe = {
   category: string;
   ingredients: { name: string }[];
   description: string;
+  /** Public image URL (TheMealDB / Unsplash). */
+  imageUrl?: string;
   techniques?: string[];
   suitablePresentations?: Presentation[];
 };
@@ -21,6 +23,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'ceviche-de-camaron',
     name: 'Ceviche de Camarón',
+    imageUrl: 'https://images.unsplash.com/photo-1748659118761-44a30b82478c?auto=format&fit=crop&w=800&q=80',
     category: 'Entrada / Coctel',
     ingredients: [
       { name: 'Camarones' },
@@ -37,6 +40,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'coctel-de-camarones-clasico',
     name: 'Coctel de Camarones Clásico',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/4xcfai1763765676.jpg',
     category: 'Entrada / Coctel',
     ingredients: [
       { name: 'Camarones' },
@@ -53,6 +57,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'aguachile-de-camaron',
     name: 'Aguachile de Camarón',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/0iryz91763778419.jpg',
     category: 'Entrada / Coctel',
     ingredients: [
       { name: 'Camarones limpios' },
@@ -69,6 +74,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'camarones-al-ajillo',
     name: 'Camarones al Ajillo',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/ze8uwg1763196123.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -89,6 +95,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'camarones-a-la-diabla',
     name: 'Camarones a la Diabla',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/bx07m71764792853.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -105,6 +112,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'arroz-con-camarones',
     name: 'Arroz con Camarones',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/jc6oub1763196663.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -121,6 +129,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'tacos-de-camaron-ensenada',
     name: 'Tacos de Camarón Ensenada',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/uvuyxu1503067369.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -137,6 +146,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'camarones-en-salsa-de-coco',
     name: 'Camarones en Salsa de Coco',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/qqlwv91763501559.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -153,6 +163,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'pasta-alfredo-con-camarones',
     name: 'Pasta Alfredo con Camarones',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/usywpp1511189717.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -169,6 +180,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'camarones-imperial-empanizados',
     name: 'Camarones Imperial (Empanizados)',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/1c5oso1614347493.jpg',
     category: 'Plato fuerte / Entrada',
     ingredients: [
       { name: 'Camarones' },
@@ -185,6 +197,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'brochetas-de-camaron-a-la-parilla',
     name: 'Brochetas de Camarón a la Parrilla',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/jg4r991779916649.jpg',
     category: 'Plato fuerte / Entrada',
     ingredients: [
       { name: 'Camarones' },
@@ -201,6 +214,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'encocado-de-camaron',
     name: 'Encocado de Camarón',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/e2kcut1782591669.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -217,6 +231,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'camarones-kung-pao',
     name: 'Camarones Kung Pao',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/1525873040.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -233,6 +248,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'chupin-o-cazuela-de-camaron',
     name: 'Chupín o Cazuela de Camarón',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/do7zps1614349775.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -249,6 +265,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'risotto-de-camarones-y-esparragos',
     name: 'Risotto de Camarones y Espárragos',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/xxrxux1503070723.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -265,6 +282,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'camarones-en-salsa-de-tamarindo',
     name: 'Camarones en Salsa de Tamarindo',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/u03xhi1763308917.jpg',
     category: 'Plato fuerte / Acompañante',
     ingredients: [
       { name: 'Camarones' },
@@ -281,6 +299,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'chop-suey-de-camarones',
     name: 'Chop Suey de Camarones',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/96lt871763480970.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -297,6 +316,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'gumbo-de-camaron',
     name: 'Gumbo de Camarón',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/raqjbj1762773035.jpg',
     category: 'Plato fuerte',
     ingredients: [
       { name: 'Camarones' },
@@ -313,6 +333,7 @@ const MOCK_RECIPES: SeedRecipe[] = [
   {
     slug: 'ceviche-dulce-de-camaron-con-mango',
     name: 'Ceviche Dulce de Camarón con Mango',
+    imageUrl: 'https://www.themealdb.com/images/media/meals/4xcfai1763765676.jpg',
     category: 'Entrada / Transición',
     ingredients: [
       { name: 'Camarones' },
@@ -364,6 +385,7 @@ export async function seedRecipes(prisma: PrismaClient): Promise<number> {
         techniques: r.techniques ?? [],
         tags: ['seed', 'camaron'],
         suitablePresentations: r.suitablePresentations ?? [],
+        imageUrl: r.imageUrl,
         sourceType: RecipeSourceType.SEED,
         sourceName: 'Marea Alta seed',
         status: RecipeStatus.PUBLISHED,
@@ -381,6 +403,7 @@ export async function seedRecipes(prisma: PrismaClient): Promise<number> {
         steps,
         techniques: r.techniques ?? [],
         suitablePresentations: r.suitablePresentations ?? [],
+        imageUrl: r.imageUrl,
         searchText,
         status: RecipeStatus.PUBLISHED,
         publishedAt: new Date(),
