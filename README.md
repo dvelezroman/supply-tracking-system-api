@@ -99,6 +99,7 @@ Errors are handled by the global exception filter (status code and message in th
 
 ## Production notes
 
+- Full VPS runbook (Postgres, ChromaDB, OpenAI RAG, web): [`docs/vps-deploy.md`](docs/vps-deploy.md).
 - `assertProductionEnv` in `main.ts` requires a non-default `JWT_SECRET` and `DATABASE_URL`.
 - Set `CORS_ORIGIN` or `FRONTEND_URL` so CORS allows your deployed frontend origin.
 - Run migrations against the production database before starting the app (`prisma migrate deploy` in CI or on the host).
