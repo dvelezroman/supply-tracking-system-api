@@ -1,3 +1,6 @@
+# Postgres (app data) + ChromaDB (recipe RAG vectors). Run:
+#   docker compose up -d
+# API: DATABASE_URL → localhost:5432 | CHROMA_URL → http://localhost:8000
 services:
   postgres:
     image: postgres:16-alpine
@@ -13,6 +16,30 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chromadb:
+    image: chromadb/chroma:1.0.0
+    container_name: chroma_db_supply_tracking_system
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      ANONYMIZED_TELEMETRY: "FALSE"
+      IS_PERSISTENT: "TRUE"
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
 volumes:
   postgres_data:
+  chroma_data:

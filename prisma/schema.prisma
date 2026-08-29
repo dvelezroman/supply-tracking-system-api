@@ -134,6 +134,7 @@ model Product {
 
   lots Lot[]
   marketplaceListings MarketplaceProduct[]
+  recipeLinks RecipeProduct[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -375,4 +376,143 @@ model TraceabilityEvent {
   @@index([timestamp])
   @@index([deletedAt])
   @@map("traceability_events")
+}
+
+// ─── Recipes + RAG ───────────────────────────────────────────────────────────
+
+enum RecipeStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+enum RecipeSourceType {
+  MANUAL
+  API_IMPORT
+  SCRAPE
+  SEED
+}
+
+/// Shrimp recipe catalogue — searchable, likeable, RAG-indexed when PUBLISHED.
+model Recipe {
+  id          String @id @default(uuid())
+  slug        String @unique
+  name        String
+  description String? @db.Text
+  category    String?
+
+  cuisine  String?
+  region   String?
+  language String  @default("es")
+
+  difficulty   String?
+  prepMinutes  Int?
+  cookMinutes  Int?
+  servings     Int?
+
+  /// [{ name, qty?, unit?, notes? }]
+  ingredients Json @default("[]")
+  /// [{ order, text }]
+  steps       Json @default("[]")
+
+  tips       String?  @db.Text
+  techniques String[] @default([])
+  tags       String[] @default([])
+  allergens  String[] @default([])
+  dietaryTags String[] @default([])
+
+  suitablePresentations Presentation[] @default([])
+
+  imageUrl String?
+
+  sourceType  RecipeSourceType @default(MANUAL)
+  sourceUrl   String?
+  sourceName  String?
+  attribution String?
+  license     String?
+
+  status      RecipeStatus @default(DRAFT)
+  contentHash String?
+  /// Denormalized blob for FTS + embedding source text.
+  searchText  String? @db.Text
+
+  likeCount   Int       @default(0)
+  publishedAt DateTime?
+
+  products RecipeProduct[]
+  likes    RecipeLike[]
+  chunks   RecipeChunk[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([category])
+  @@index([likeCount])
+  @@index([publishedAt])
+  @@index([contentHash])
+  @@map("recipes")
+}
+
+model RecipeProduct {
+  id        String  @id @default(uuid())
+  recipeId  String
+  recipe    Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([recipeId, productId])
+  @@index([productId])
+  @@map("recipe_products")
+}
+
+/// Anonymous like (clientKey from localStorage UUID).
+model RecipeLike {
+  id        String   @id @default(uuid())
+  recipeId  String
+  recipe    Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  clientKey String
+  createdAt DateTime @default(now())
+
+  @@unique([recipeId, clientKey])
+  @@index([createdAt])
+  @@index([recipeId])
+  @@map("recipe_likes")
+}
+
+/// RAG chunk metadata in Postgres; embeddings live in ChromaDB (Docker).
+model RecipeChunk {
+  id         String @id @default(uuid())
+  recipeId   String
+  recipe     Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  chunkIndex Int
+  content    String @db.Text
+  /// Chroma document id (usually same as this row id).
+  chromaId   String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([recipeId, chunkIndex])
+  @@index([recipeId])
+  @@map("recipe_chunks")
+}
+
+/// Optional ingest job tracking for scrape/API imports.
+model RecipeIngestJob {
+  id           String   @id @default(uuid())
+  sourceType   RecipeSourceType
+  sourceUrl    String?
+  query        String?
+  status       String   @default("PENDING")
+  resultRecipeId String?
+  error        String?  @db.Text
+  rawPayload   Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status])
+  @@map("recipe_ingest_jobs")
 }

@@ -12,6 +12,7 @@ import { PublicTraceModule } from './modules/public-trace/public-trace.module';
 import { RestaurantsModule } from './modules/restaurants/restaurants.module';
 import { HealthModule } from './modules/health/health.module';
 import { MarketplaceModule } from './modules/marketplace/marketplace.module';
+import { RecipesModule } from './modules/recipes/recipes.module';
 import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
@@ -30,6 +31,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     PublicTraceModule,
     RestaurantsModule,
     MarketplaceModule,
+    RecipesModule,
     HealthModule,
   ],
   providers: [RolesGuard],

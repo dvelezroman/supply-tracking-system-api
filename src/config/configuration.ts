@@ -44,4 +44,16 @@ export default () => ({
     pass: process.env.SMTP_PASS?.trim() || '',
     from: process.env.SMTP_FROM?.trim() || '',
   },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY?.trim() || '',
+    chatModel: process.env.OPENAI_CHAT_MODEL?.trim() || 'gpt-4o-mini',
+    embedModel:
+      process.env.OPENAI_EMBED_MODEL?.trim() || 'text-embedding-3-small',
+  },
+  chroma: {
+    url: process.env.CHROMA_URL?.trim() || 'http://localhost:8000',
+    collection:
+      process.env.CHROMA_COLLECTION?.trim() || 'marea_recipe_chunks',
+  },
+  spoonacularApiKey: process.env.SPOONACULAR_API_KEY?.trim() || '',
 });

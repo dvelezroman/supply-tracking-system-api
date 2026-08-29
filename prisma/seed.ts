@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { demoGtin13, ean13CheckDigit } from '../src/common/label/retail-label.constants';
+import { seedRecipes } from './seed-recipes';
 
 /** Distinct demo EAN-13 per SKU (replace with GS1 Ecuador codes before retail print). */
 function demoGtin13From12(gtin12: string): string {
@@ -1009,6 +1010,8 @@ async function main() {
     }
   }
 
+  const recipeCount = await seedRecipes(prisma);
+
   console.log('\nSeed completo (upserts only).');
   console.log('  Cuentas demo:');
   console.log('    · admin@supply.com / admin123 (ADMIN)');
@@ -1019,6 +1022,7 @@ async function main() {
     const n = await prisma.lot.count({ where: { product: { sku: def.sku } } });
     console.log(`    · ${def.sku}: ${n} lote(s)`);
   }
+  console.log(`  Recetas seed: ${recipeCount}`);
   console.log('  Marketplace retail (publicados):');
   for (const m of marketplaceSeeds) {
     console.log(`    · ${m.sku} — ${m.name} ($${ (m.priceCents / 100).toFixed(2) }, stock ${m.stockQty})`);
