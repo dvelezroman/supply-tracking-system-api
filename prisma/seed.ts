@@ -205,6 +205,21 @@ async function main() {
     },
   });
 
+  // ── Product segments ─────────────────────────────────────────────────────
+  const segmentSeeds = [
+    { key: 'camaron' as const, id: 'seed-segment-camaron', name: 'Camarón' },
+    { key: 'otros' as const, id: 'seed-segment-otros', name: 'Otros' },
+  ];
+  const segments = {} as Record<(typeof segmentSeeds)[number]['key'], { id: string }>;
+  for (const s of segmentSeeds) {
+    const row = await prisma.productSegment.upsert({
+      where: { id: s.id },
+      update: { name: s.name },
+      create: { id: s.id, name: s.name },
+    });
+    segments[s.key] = row;
+  }
+
   // ── Products ───────────────────────────────────────────────────────────────
   const productDefs = [
     {
@@ -212,6 +227,7 @@ async function main() {
       name: 'Camarón Premium "Marea Alta" (Cola)',
       description: 'Camarón Premium de exportación, presentación cola',
       category: 'Camarón',
+      segmentKey: 'camaron' as const,
       labelTitle: 'Camarón Premium',
       labelGtin13: demoGtin13(),
       labelNetWeightOz: 32,
@@ -223,12 +239,14 @@ async function main() {
       name: 'Camarón Butterfly IQF — Marea Alta',
       description: 'Corte mariposa, IQF, ideal food service',
       category: 'Camarón',
+      segmentKey: 'camaron' as const,
     },
     {
       sku: 'CAMARON-SHELL-ON-BOX',
       name: 'Camarón Shell On caja 4.5 kg',
       description: 'Entero con caparazón, empaque caja',
       category: 'Camarón',
+      segmentKey: 'camaron' as const,
       labelTitle: 'Camarón Shell On',
       labelGtin13: demoGtin13From12('593123456788'),
       labelNetWeightOz: 158.7,
@@ -240,12 +258,14 @@ async function main() {
       name: 'Filete salmón atlántico trim D',
       description: 'Producto complementario — trazabilidad demo',
       category: 'Salmón',
+      segmentKey: 'otros' as const,
     },
     {
       sku: 'CAMARON-RETAIL-IQF-340G',
       name: 'Camarón IQF bandeja 340 g — línea retail',
       description: 'Presentación retail; ideal para demo de filtros y QR en góndola',
       category: 'Camarón',
+      segmentKey: 'camaron' as const,
     },
   ] as const;
 
@@ -259,14 +279,22 @@ async function main() {
       labelSanitaryArcsa:
         'labelSanitaryArcsa' in p ? (p as { labelSanitaryArcsa?: string }).labelSanitaryArcsa : undefined,
     };
+    const segmentId = segments[p.segmentKey].id;
     const row = await prisma.product.upsert({
       where: { sku: p.sku },
-      update: { name: p.name, description: p.description, category: p.category, ...labelFields },
+      update: {
+        name: p.name,
+        description: p.description,
+        category: p.category,
+        segmentId,
+        ...labelFields,
+      },
       create: {
         sku: p.sku,
         name: p.name,
         description: p.description,
         category: p.category,
+        segmentId,
         ...labelFields,
       },
     });
@@ -1064,10 +1092,12 @@ async function main() {
   console.log('    · admin@supply.com / admin123 (ADMIN)');
   console.log('    · operador@mareaalta.demo / demo123 (ACTOR — vinculado a Marea Alta)');
   console.log('    · visita@supply.com / demo123 (VIEWER — solo lectura)');
+  console.log(`  Segmentos: ${segmentSeeds.map((s) => s.name).join(', ')}`);
   console.log(`  Productos: ${productDefs.length}`);
   for (const def of productDefs) {
     const n = await prisma.lot.count({ where: { product: { sku: def.sku } } });
-    console.log(`    · ${def.sku}: ${n} lote(s)`);
+    const segName = segmentSeeds.find((s) => s.key === def.segmentKey)?.name ?? '—';
+    console.log(`    · ${def.sku} [${segName}]: ${n} lote(s)`);
   }
   console.log(`  Recetas seed: ${recipeCount}`);
   console.log('  Marketplace retail (publicados):');

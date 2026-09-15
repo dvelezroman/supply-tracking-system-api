@@ -5,6 +5,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
+import { ProductSegmentsModule } from './modules/product-segments/product-segments.module';
 import { ActorsModule } from './modules/actors/actors.module';
 import { TraceabilityModule } from './modules/traceability/traceability.module';
 import { LotsModule } from './modules/lots/lots.module';
@@ -25,6 +26,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     AuthModule,
     UsersModule,
     ProductsModule,
+    ProductSegmentsModule,
     ActorsModule,
     LotsModule,
     TraceabilityModule,

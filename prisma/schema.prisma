@@ -112,6 +112,19 @@ model Actor {
   @@map("actors")
 }
 
+/// Business segment for grouping products (e.g. camarón, otros).
+model ProductSegment {
+  id   String @id @default(uuid())
+  name String @unique
+
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("product_segments")
+}
+
 /// Master product catalogue — represents the product species/brand, not a batch.
 /// Example: "Camarón Premium Marea Alta (Cola)" is one Product;
 /// each harvest batch becomes a Lot linked to this Product.
@@ -121,6 +134,8 @@ model Product {
   name        String
   description String?
   category    String?
+  segmentId   String?
+  segment     ProductSegment? @relation(fields: [segmentId], references: [id], onDelete: SetNull)
   metadata    Json?
   /// Default public QR page visibility for **new** lots (copied into `Lot.publicVisibility` on create).
   publicVisibilityDefaults Json?
@@ -139,6 +154,7 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([segmentId])
   @@map("products")
 }
 

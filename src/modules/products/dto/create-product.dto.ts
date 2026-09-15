@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsObject } from 'class-validator';
+import { IsString, IsOptional, IsObject, IsUUID, ValidateIf } from 'class-validator';
 
 export class CreateProductDto {
   @ApiProperty({ example: 'ORG-APPLE-001' })
@@ -19,6 +19,15 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    description: 'Product segment ID (e.g. Camarón, Otros)',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  segmentId?: string | null;
 
   @ApiPropertyOptional({ example: { origin: 'California', certifications: ['USDA Organic'] } })
   @IsOptional()

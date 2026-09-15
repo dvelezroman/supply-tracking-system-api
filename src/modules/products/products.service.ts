@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ProductsRepository } from './products.repository';
+import { ProductSegmentsService } from '../product-segments/product-segments.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import {
@@ -17,12 +18,37 @@ import { PatchRetailLabelDto } from './dto/patch-retail-label.dto';
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly productsRepository: ProductsRepository) {}
+  constructor(
+    private readonly productsRepository: ProductsRepository,
+    private readonly productSegmentsService: ProductSegmentsService,
+  ) {}
+
+  private async segmentForCreate(
+    segmentId: string | null | undefined,
+  ): Promise<Prisma.ProductCreateInput['segment'] | undefined> {
+    if (!segmentId) return undefined;
+    await this.productSegmentsService.assertExists(segmentId);
+    return { connect: { id: segmentId } };
+  }
+
+  private async segmentForUpdate(
+    segmentId: string | null | undefined,
+  ): Promise<Prisma.ProductUpdateInput['segment'] | undefined> {
+    if (segmentId === undefined) return undefined;
+    if (segmentId === null) return { disconnect: true };
+    await this.productSegmentsService.assertExists(segmentId);
+    return { connect: { id: segmentId } };
+  }
 
   async create(dto: CreateProductDto) {
     const existing = await this.productsRepository.findBySku(dto.sku);
     if (existing) throw new ConflictException(`SKU '${dto.sku}' already exists`);
-    return this.productsRepository.create(dto);
+    const segment = await this.segmentForCreate(dto.segmentId);
+    const { segmentId: _drop, ...rest } = dto;
+    return this.productsRepository.create({
+      ...rest,
+      ...(segment ? { segment } : {}),
+    });
   }
 
   async findById(id: string) {
@@ -57,7 +83,12 @@ export class ProductsService {
 
   async update(id: string, dto: UpdateProductDto) {
     await this.findById(id);
-    return this.productsRepository.update(id, dto);
+    const segment = await this.segmentForUpdate(dto.segmentId);
+    const { segmentId: _drop, ...rest } = dto;
+    return this.productsRepository.update(id, {
+      ...rest,
+      ...(segment !== undefined ? { segment } : {}),
+    });
   }
 
   async remove(id: string) {

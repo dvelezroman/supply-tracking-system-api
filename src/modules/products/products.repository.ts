@@ -10,10 +10,15 @@ export class ProductsRepository {
     return this.prisma.product.create({ data });
   }
 
+  private segmentInclude = {
+    segment: { select: { id: true, name: true } },
+  } as const;
+
   findById(id: string) {
     return this.prisma.product.findUnique({
       where: { id },
       include: {
+        ...this.segmentInclude,
         lots: {
           select: {
             id: true,
@@ -40,7 +45,10 @@ export class ProductsRepository {
     return this.prisma.product.findMany({
       ...params,
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { lots: true } } },
+      include: {
+        ...this.segmentInclude,
+        _count: { select: { lots: true } },
+      },
     });
   }
 
