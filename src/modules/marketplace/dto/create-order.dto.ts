@@ -5,9 +5,9 @@ import {
   IsArray,
   IsEmail,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   Min,
   MinLength,
@@ -15,11 +15,13 @@ import {
 } from 'class-validator';
 
 export class CreateOrderItemDto {
-  @ApiProperty()
-  @IsUUID()
+  @ApiProperty({ description: 'Marketplace product id (UUID or stable string id)' })
+  @IsString()
+  @IsNotEmpty()
   productId: string;
 
   @ApiProperty({ example: 2 })
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   qty: number;

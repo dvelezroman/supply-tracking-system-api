@@ -263,6 +263,7 @@ export class MarketplaceService {
       throw new BadRequestException('Store is currently disabled');
     }
 
+    const mergedLines = this.mergeOrderLines(dto.items);
     const orderNumber = this.generateOrderNumber();
     let order;
     try {
@@ -274,7 +275,7 @@ export class MarketplaceService {
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
         currency: 'USD',
-        lines: dto.items.map((i) => ({
+        lines: mergedLines.map((i) => ({
           productId: i.productId,
           name: '',
           sku: '',
@@ -284,24 +285,27 @@ export class MarketplaceService {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.startsWith('STOCK:')) {
-        const [, productId, available, name] = msg.split(':');
+      const stock = this.parseStockError(msg);
+      if (stock) {
         throw new HttpException(
           {
             message: 'Insufficient stock',
-            details: [
-              {
-                productId,
-                available: Number(available),
-                name,
-              },
-            ],
+            details: [stock],
           },
           HttpStatus.CONFLICT,
         );
       }
       if (msg.startsWith('UNAVAILABLE:')) {
-        throw new BadRequestException('One or more products are unavailable');
+        const productId = msg.slice('UNAVAILABLE:'.length);
+        throw new BadRequestException({
+          message: 'One or more products are unavailable',
+          details: [{ productId }],
+        });
+      }
+      if (msg === 'MIXED_CURRENCY') {
+        throw new BadRequestException(
+          'Cart contains products with different currencies',
+        );
       }
       throw err;
     }
@@ -465,5 +469,39 @@ export class MarketplaceService {
     const d = String(now.getUTCDate()).padStart(2, '0');
     const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
     return `MA-${y}${m}${d}-${rand}`;
+  }
+
+  /** Sum qty when the same product appears more than once in the payload. */
+  private mergeOrderLines(
+    items: Array<{ productId: string; qty: number }>,
+  ): Array<{ productId: string; qty: number }> {
+    const byProduct = new Map<string, number>();
+    for (const item of items) {
+      const id = item.productId.trim();
+      byProduct.set(id, (byProduct.get(id) ?? 0) + item.qty);
+    }
+    return [...byProduct.entries()].map(([productId, qty]) => ({
+      productId,
+      qty,
+    }));
+  }
+
+  /** STOCK:productId:available:name — name may contain colons. */
+  private parseStockError(
+    msg: string,
+  ): { productId: string; available: number; name: string } | null {
+    const prefix = 'STOCK:';
+    if (!msg.startsWith(prefix)) return null;
+    const rest = msg.slice(prefix.length);
+    const firstSep = rest.indexOf(':');
+    if (firstSep < 0) return null;
+    const productId = rest.slice(0, firstSep);
+    const afterId = rest.slice(firstSep + 1);
+    const secondSep = afterId.indexOf(':');
+    if (secondSep < 0) return null;
+    const available = Number(afterId.slice(0, secondSep));
+    const name = afterId.slice(secondSep + 1);
+    if (!productId || !Number.isFinite(available)) return null;
+    return { productId, available, name };
   }
 }

@@ -179,7 +179,8 @@ export class RecipesRepository {
     return this.prisma.recipe.findMany({
       where: { status: RecipeStatus.PUBLISHED },
       select: listSelect,
-      orderBy: [{ likeCount: 'desc' }, { publishedAt: 'desc' }],
+      // Stable name tie-break — avoid newest-seed bias when likeCounts are equal.
+      orderBy: [{ likeCount: 'desc' }, { name: 'asc' }],
       take: limit,
     });
   }

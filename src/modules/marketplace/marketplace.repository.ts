@@ -144,6 +144,7 @@ export class MarketplaceRepository {
     return this.prisma.$transaction(async (tx) => {
       let subtotalCents = 0;
       const resolved: typeof args.lines = [];
+      const currencies = new Set<string>();
 
       for (const line of args.lines) {
         const product = await tx.marketplaceProduct.findUnique({
@@ -167,6 +168,7 @@ export class MarketplaceRepository {
           where: { id: product.id },
           data: { stockQty: { decrement: line.qty } },
         });
+        currencies.add(product.currency.toUpperCase());
         const unitPriceCents = product.priceCents;
         subtotalCents += unitPriceCents * line.qty;
         resolved.push({
@@ -179,6 +181,11 @@ export class MarketplaceRepository {
         });
       }
 
+      if (currencies.size > 1) {
+        throw new Error('MIXED_CURRENCY');
+      }
+      const orderCurrency = [...currencies][0] ?? args.currency ?? 'USD';
+
       return tx.marketplaceOrder.create({
         data: {
           orderNumber: args.orderNumber,
@@ -188,7 +195,7 @@ export class MarketplaceRepository {
           customerAddress: args.customerAddress,
           notes: args.notes,
           subtotalCents,
-          currency: args.currency,
+          currency: orderCurrency,
           status: MarketplaceOrderStatus.PENDING,
           items: {
             create: resolved.map((r) => ({

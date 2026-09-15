@@ -361,7 +361,12 @@ function searchTextFor(r: SeedRecipe): string {
 
 export async function seedRecipes(prisma: PrismaClient): Promise<number> {
   let count = 0;
-  for (const r of MOCK_RECIPES) {
+  // Stagger create timestamps so re-seed on empty DB doesn't put last item (mango) first by date.
+  const publishedBase = new Date();
+  publishedBase.setUTCMinutes(publishedBase.getUTCMinutes() - MOCK_RECIPES.length);
+
+  for (let i = 0; i < MOCK_RECIPES.length; i++) {
+    const r = MOCK_RECIPES[i];
     const searchText = searchTextFor(r);
     const contentHash = createHash('sha256')
       .update(`SEED|${r.slug}|${r.name}`)
@@ -372,6 +377,7 @@ export async function seedRecipes(prisma: PrismaClient): Promise<number> {
         text: r.description,
       },
     ];
+    const publishedAt = new Date(publishedBase.getTime() + i * 60_000);
     await prisma.recipe.upsert({
       where: { slug: r.slug },
       create: {
@@ -391,7 +397,7 @@ export async function seedRecipes(prisma: PrismaClient): Promise<number> {
         status: RecipeStatus.PUBLISHED,
         contentHash,
         searchText,
-        publishedAt: new Date(),
+        publishedAt,
         region: 'Costa Pacífico',
         cuisine: 'Latina',
       },
@@ -406,7 +412,7 @@ export async function seedRecipes(prisma: PrismaClient): Promise<number> {
         imageUrl: r.imageUrl,
         searchText,
         status: RecipeStatus.PUBLISHED,
-        publishedAt: new Date(),
+        // Do not overwrite publishedAt — re-seed must not push last recipe to the top of popular.
       },
     });
     count += 1;

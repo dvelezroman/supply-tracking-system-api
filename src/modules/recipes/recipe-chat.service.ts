@@ -20,8 +20,12 @@ export type ChatResponse = {
 
 /** Fewer Chroma hits → fewer prompt tokens. */
 const RAG_TOP_K = 3;
+/** Extra Chroma rows so we can diversify by recipe. */
+const RAG_OVERFETCH = 4;
 /** Cosine distance ceiling; weaker matches dropped. */
 const RAG_MAX_DISTANCE = 0.75;
+/** Hits within this band of the best distance may be lightly shuffled. */
+const RAG_NEAR_TIE_BAND = 0.05;
 /** Cap each chunk body in the prompt. */
 const RAG_MAX_CHUNK_CHARS = 480;
 /** Cap model reply length. */
@@ -46,7 +50,8 @@ const COPY: Record<
     system: `Mary, Marea Alta. Español. Máx 3–4 frases cortas.
 Usa SOLO los chunks RAG. Cita datos (cantidades, pasos, presentación) si vienen en el contexto.
 Rutas: /recetas/{slug} (sin markdown). Si falta info: /recetas o WhatsApp.
-Prioriza presentaciones Marea Alta (cola PD, butterfly, shell-on, IQF) cuando encaje.`,
+Prioriza presentaciones Marea Alta (cola PD, butterfly, shell-on, IQF) cuando encaje.
+Cuando hay varias recetas en el contexto, menciona al menos dos distintas si encajan.`,
   },
   en: {
     noKey:
@@ -57,17 +62,65 @@ Prioriza presentaciones Marea Alta (cola PD, butterfly, shell-on, IQF) cuando en
     system: `Mary, Marea Alta. English. Max 3–4 short sentences.
 Use ONLY the RAG chunks. Cite amounts/steps/presentation when present in context.
 Paths: /recetas/{slug} (no markdown). If missing info: /recetas or WhatsApp.
-Prefer Marea Alta presentations (tail-on PD, butterfly, shell-on, IQF) when relevant.`,
+Prefer Marea Alta presentations (tail-on PD, butterfly, shell-on, IQF) when relevant.
+When several recipes are in context, mention at least two distinct ones if they fit.`,
   },
 };
 
-function selectChunks(hits: RetrievedChunk[]): RetrievedChunk[] {
-  const tight = hits
-    .filter((h) => h.distance <= RAG_MAX_DISTANCE)
-    .slice(0, RAG_TOP_K);
-  if (tight.length) return tight;
-  // Fallback: still use best Chroma hits so Mary isn't empty-handed
-  return hits.slice(0, Math.min(2, hits.length));
+/** Deterministic PRNG from string (message + minute bucket). */
+function hashSeed(input: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleInPlace<T>(arr: T[], rand: () => number): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+/** One chunk per recipe, then light shuffle among near-distance ties. */
+function selectChunks(
+  hits: RetrievedChunk[],
+  diversitySeed: string,
+): RetrievedChunk[] {
+  const byRecipe: RetrievedChunk[] = [];
+  const seen = new Set<string>();
+  for (const h of hits) {
+    const key = h.recipeId || h.slug;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    byRecipe.push(h);
+  }
+
+  const within = byRecipe.filter((h) => h.distance <= RAG_MAX_DISTANCE);
+  const pool = within.length ? within : byRecipe.slice(0, Math.min(2, byRecipe.length));
+  if (pool.length <= 1) return pool.slice(0, RAG_TOP_K);
+
+  const best = Math.min(...pool.map((h) => h.distance));
+  const near = pool.filter((h) => h.distance - best <= RAG_NEAR_TIE_BAND);
+  const rest = pool.filter((h) => h.distance - best > RAG_NEAR_TIE_BAND);
+
+  const rand = mulberry32(hashSeed(diversitySeed));
+  shuffleInPlace(near, rand);
+
+  return [...near, ...rest].slice(0, RAG_TOP_K);
 }
 
 function truncate(text: string, max: number): string {
@@ -120,9 +173,15 @@ export class RecipeChatService {
       };
     }
 
-    // Over-fetch slightly, then distance-filter + truncate for the prompt
-    const rawHits = await this.embeddings.retrieve(trimmed, RAG_TOP_K + 2);
-    const hits = selectChunks(rawHits);
+    const minuteBucket = Math.floor(Date.now() / 60_000);
+    const diversitySeed = `${trimmed}|${minuteBucket}`;
+
+    // Over-fetch, then diversify (1 chunk/recipe) + near-tie shuffle
+    const rawHits = await this.embeddings.retrieve(
+      trimmed,
+      RAG_TOP_K + RAG_OVERFETCH,
+    );
+    const hits = selectChunks(rawHits, diversitySeed);
     const recipeRefs = uniqueRefs(hits);
 
     const context =
