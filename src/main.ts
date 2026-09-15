@@ -4,6 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
 import { AppModule } from './app.module';
+import { readAllowedCorsOrigins } from './config/cors.util';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
@@ -23,30 +24,29 @@ function assertProductionEnv(): void {
   }
 }
 
-function corsOriginOption():
-  | boolean
-  | string
-  | string[]
-  | RegExp
-  | ((
-      origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean) => void,
-    ) => void) {
-  const raw = process.env.CORS_ORIGIN?.trim();
-  if (raw) {
-    const list = raw.split(',').map((o) => o.trim()).filter(Boolean);
-    return list.length === 1 ? list[0] : list;
+type CorsOriginCallback = (
+  origin: string | undefined,
+  callback: (err: Error | null, allow?: boolean) => void,
+) => void;
+
+function corsOriginOption(): boolean | CorsOriginCallback {
+  if (process.env.NODE_ENV !== 'production') {
+    return true;
   }
-  if (process.env.NODE_ENV === 'production') {
-    const fallback = process.env.FRONTEND_URL?.trim();
-    if (!fallback) {
-      throw new Error(
-        'Set CORS_ORIGIN (comma-separated) or FRONTEND_URL in production for CORS',
-      );
+  const allowed = readAllowedCorsOrigins();
+  if (allowed.length === 0) {
+    throw new Error(
+      'Set CORS_ORIGIN (comma-separated) or FRONTEND_URL in production for CORS',
+    );
+  }
+  const allowedSet = new Set(allowed);
+  return (origin, callback) => {
+    if (!origin || allowedSet.has(origin)) {
+      callback(null, true);
+      return;
     }
-    return fallback;
-  }
-  return true;
+    callback(null, false);
+  };
 }
 
 async function bootstrap() {

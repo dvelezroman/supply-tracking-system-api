@@ -10,6 +10,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import {
@@ -175,9 +176,23 @@ export class StorageService {
             secretAccessKey: config.secretAccessKey,
           }
         : undefined;
+    const connectionTimeoutMs = Number(
+      this.config.get<string>('S3_CONNECTION_TIMEOUT_MS') ??
+        process.env.S3_CONNECTION_TIMEOUT_MS ??
+        10_000,
+    );
+    const requestTimeoutMs = Number(
+      this.config.get<string>('S3_REQUEST_TIMEOUT_MS') ??
+        process.env.S3_REQUEST_TIMEOUT_MS ??
+        45_000,
+    );
     this.client = new S3Client({
       region: config.region,
       credentials,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: connectionTimeoutMs,
+        requestTimeout: requestTimeoutMs,
+      }),
     });
     return this.client;
   }
