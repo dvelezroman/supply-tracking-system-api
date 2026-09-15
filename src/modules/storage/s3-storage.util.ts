@@ -86,6 +86,23 @@ export function productImageObjectKey(input: {
   return `${trimSlash(input.prefix)}/${sanitizeS3KeySegment(input.skuCode)}/${input.imageId}.${ext}`;
 }
 
+/** AWS SDK v3 / Smithy errors for missing S3 objects (404 / NoSuchKey). */
+export function isS3ObjectNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+  const e = err as {
+    name?: string;
+    Code?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  if (e.$metadata?.httpStatusCode === 404) {
+    return true;
+  }
+  const code = e.name ?? e.Code ?? '';
+  return code === 'NoSuchKey' || code === 'NotFound';
+}
+
 export function publicObjectUrl(
   publicBaseUrl: string | null,
   storageKey: string,

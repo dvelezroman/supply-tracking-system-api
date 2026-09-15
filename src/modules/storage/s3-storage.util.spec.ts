@@ -1,5 +1,6 @@
 import {
   DEFAULT_MARKETPLACE_KEY_PREFIX,
+  isS3ObjectNotFoundError,
   parseAwsS3BucketName,
   productImageObjectKey,
   publicObjectUrl,
@@ -67,6 +68,16 @@ describe('s3-storage.util', () => {
         mimeType: 'image/jpeg',
       }),
     ).toBe('mareaalta-marketplace/MA-250/img1.jpg');
+  });
+
+  it('detects S3 missing-object errors', () => {
+    expect(isS3ObjectNotFoundError({ name: 'NoSuchKey' })).toBe(true);
+    expect(isS3ObjectNotFoundError({ name: 'NotFound' })).toBe(true);
+    expect(
+      isS3ObjectNotFoundError({ $metadata: { httpStatusCode: 404 } }),
+    ).toBe(true);
+    expect(isS3ObjectNotFoundError({ name: 'AccessDenied' })).toBe(false);
+    expect(isS3ObjectNotFoundError(null)).toBe(false);
   });
 
   it('sanitizes SKU so it cannot inject extra S3 path segments', () => {

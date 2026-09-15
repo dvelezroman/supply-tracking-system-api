@@ -1,6 +1,7 @@
 import {
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -14,6 +15,7 @@ import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import {
+  isS3ObjectNotFoundError,
   publicObjectUrl,
   readS3StorageConfig,
   type S3StorageConfig,
@@ -121,6 +123,12 @@ export class StorageService {
         };
       } catch (err) {
         const detail = err instanceof Error ? err.message : 'unknown';
+        if (isS3ObjectNotFoundError(err)) {
+          this.logger.warn(`s3 get missing key=${key}: ${detail}`);
+          throw new NotFoundException(
+            'La foto no existe en S3 (registro huérfano). Elimínela y vuelva a subir, o marque otra como principal.',
+          );
+        }
         this.logger.error(`s3 get failed key=${key}: ${detail}`);
         throw new ServiceUnavailableException('No se pudo leer la foto en S3.');
       }
@@ -226,7 +234,7 @@ export class StorageService {
             : 'image/jpeg';
       return { body: new Uint8Array(buf), contentType };
     } catch {
-      throw new ServiceUnavailableException(
+      throw new NotFoundException(
         `Local file not found for key=${key}`,
       );
     }
