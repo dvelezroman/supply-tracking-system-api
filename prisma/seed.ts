@@ -961,32 +961,79 @@ async function main() {
 
   for (const m of marketplaceSeeds) {
     const traceId = m.traceSku ? products[m.traceSku]?.id : undefined;
-    const listing = await prisma.marketplaceProduct.upsert({
-      where: { sku: m.sku },
-      create: {
-        id: m.id,
-        sku: m.sku,
-        slug: m.slug,
-        name: m.name,
-        description: m.description,
-        category: m.category,
-        priceCents: m.priceCents,
-        currency: 'USD',
-        stockQty: m.stockQty,
-        published: true,
-        ...(traceId ? { traceProductId: traceId } : {}),
-      },
-      update: {
-        name: m.name,
-        slug: m.slug,
-        description: m.description,
-        category: m.category,
-        priceCents: m.priceCents,
-        stockQty: m.stockQty,
-        published: true,
-        ...(traceId ? { traceProductId: traceId } : {}),
-      },
+    const dataCreate = {
+      id: m.id,
+      sku: m.sku,
+      slug: m.slug,
+      name: m.name,
+      description: m.description,
+      category: m.category,
+      priceCents: m.priceCents,
+      currency: 'USD',
+      stockQty: m.stockQty,
+      published: true,
+      ...(traceId ? { traceProductId: traceId } : {}),
+    };
+    const dataUpdate = {
+      sku: m.sku,
+      name: m.name,
+      slug: m.slug,
+      description: m.description,
+      category: m.category,
+      priceCents: m.priceCents,
+      stockQty: m.stockQty,
+      published: true,
+      ...(traceId ? { traceProductId: traceId } : {}),
+    };
+
+    // Upsert by id OR sku — VPS may have seed id with old sku (or sku with random uuid).
+    // Plain upsert({ where: { sku } }) then create({ id }) → P2002 on id.
+    const byId = await prisma.marketplaceProduct.findUnique({
+      where: { id: m.id },
     });
+    const bySku = await prisma.marketplaceProduct.findUnique({
+      where: { sku: m.sku },
+    });
+
+    let listing;
+    if (byId && bySku && byId.id !== bySku.id) {
+      // Same seed id and sku on different rows — keep id row, drop sku duplicate if unused.
+      const orderCount = await prisma.marketplaceOrderItem.count({
+        where: { productId: bySku.id },
+      });
+      if (orderCount === 0) {
+        await prisma.marketplaceProduct.delete({ where: { id: bySku.id } });
+      } else {
+        throw new Error(
+          `Marketplace seed conflict: sku ${m.sku} is on ${bySku.id} with orders; seed id is ${m.id}`,
+        );
+      }
+      listing = await prisma.marketplaceProduct.update({
+        where: { id: m.id },
+        data: dataUpdate,
+      });
+    } else if (byId) {
+      listing = await prisma.marketplaceProduct.update({
+        where: { id: m.id },
+        data: dataUpdate,
+      });
+    } else if (bySku) {
+      listing = await prisma.marketplaceProduct.update({
+        where: { sku: m.sku },
+        data: {
+          name: m.name,
+          slug: m.slug,
+          description: m.description,
+          category: m.category,
+          priceCents: m.priceCents,
+          stockQty: m.stockQty,
+          published: true,
+          ...(traceId ? { traceProductId: traceId } : {}),
+        },
+      });
+    } else {
+      listing = await prisma.marketplaceProduct.create({ data: dataCreate });
+    }
 
     for (const img of m.images) {
       await prisma.marketplaceProductImage.upsert({
