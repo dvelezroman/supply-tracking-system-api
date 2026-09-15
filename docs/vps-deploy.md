@@ -173,13 +173,37 @@ El reverse proxy debe reenviar al puerto de la API (`3000` por defecto), p.ej. `
 
 ## 6. Web (Angular)
 
+Monorepo (`api/` + `web/` en el mismo clone):
+
 ```bash
-cd web
-npm ci   # incluye devDependencies (@angular/cli); no uses --omit=dev aquí
+cd /var/www/supply-tracking-system/web
+npm ci   # incluye devDependencies (@angular/cli); no uses --omit=dev
 npm run build
 ```
 
-Si ves `ng: not found` o `Cannot find module '@angular/cli'`: no corriste `npm ci` en `web/`, o instalaste con `--omit=dev` / `NODE_ENV=production` (eso omite el CLI de Angular).
+Desde la raíz del monorepo (con el `package.json` wrapper del repo):
+
+```bash
+cd /var/www/supply-tracking-system
+npm run install:web   # o: npm ci --prefix web
+npm run build         # delega a web/
+```
+
+Si el `package.json` de Angular está **en la raíz** del VPS (solo desplegaste `web/` ahí):
+
+```bash
+cd /var/www/supply-tracking-system
+npm ci
+npm run build
+```
+
+Errores típicos:
+
+| Mensaje | Causa | Fix |
+|--------|--------|-----|
+| `ng: not found` | Sin `node_modules/.bin` | `npm ci` en la carpeta del `package.json` web |
+| `Cannot find module .../@angular/cli/bin/ng.js` | **No hay `node_modules`** o instalación incompleta | `npm ci` (sin `--omit=dev`) |
+| Build desde raíz monorepo sin wrapper | `package.json` está en `web/` | `cd web` o `npm run build --prefix web` |
 
 Sirve `web/dist/supply-tracking-web` (o la carpeta que genere el build) con nginx/Caddy.
 
