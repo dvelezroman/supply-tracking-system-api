@@ -112,3 +112,49 @@ export function publicObjectUrl(
   }
   return `${trimSlash(publicBaseUrl)}/${storageKey.replace(/^\/+/, '')}`;
 }
+
+/** Object key from virtual-hosted or path-style S3 HTTPS URLs. */
+export function parseAwsS3ObjectKeyFromUrl(
+  rawUrl: string,
+  bucketHint?: string | null,
+): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/i.test(parsed.protocol)) {
+    return null;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const pathKey = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+  if (!pathKey) {
+    return null;
+  }
+
+  const vhost = host.match(/^(.+)\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/);
+  if (vhost) {
+    const bucket = vhost[1];
+    if (bucketHint && bucket !== bucketHint.trim().toLowerCase()) {
+      return null;
+    }
+    return pathKey;
+  }
+
+  if (host.startsWith('s3.') && host.endsWith('.amazonaws.com')) {
+    const slash = pathKey.indexOf('/');
+    if (slash <= 0) {
+      return null;
+    }
+    const bucket = pathKey.slice(0, slash);
+    const key = pathKey.slice(slash + 1);
+    if (bucketHint && bucket !== bucketHint.trim().toLowerCase()) {
+      return null;
+    }
+    return key || null;
+  }
+
+  return null;
+}

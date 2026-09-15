@@ -17,7 +17,12 @@ import {
   PRODUCT_IMAGE_MAX_COUNT,
   sniffProductImageMime,
 } from '../storage/marketplace-product-images.util';
-import { productImageObjectKey, DEFAULT_MARKETPLACE_KEY_PREFIX } from '../storage/s3-storage.util';
+import {
+  DEFAULT_MARKETPLACE_KEY_PREFIX,
+  parseAwsS3ObjectKeyFromUrl,
+  productImageObjectKey,
+  readS3StorageConfig,
+} from '../storage/s3-storage.util';
 import { StorageService } from '../storage/storage.service';
 import { CreateMarketplaceOrderDto } from './dto/create-order.dto';
 import {
@@ -262,6 +267,16 @@ export class MarketplaceService {
         image.url?.trim() || image.key.slice('external:'.length).trim();
       if (!/^https?:\/\//i.test(url)) {
         throw new BadRequestException('External image URL is missing or invalid');
+      }
+      const bucket = readS3StorageConfig()?.bucket ?? null;
+      const s3Key = parseAwsS3ObjectKeyFromUrl(url, bucket);
+      if (s3Key && this.storage.isS3Configured()) {
+        const object = await this.storage.getObject(s3Key);
+        return {
+          mode: 'stream' as const,
+          bytes: object.body,
+          mimeType: object.contentType,
+        };
       }
       return { mode: 'redirect' as const, url };
     }
