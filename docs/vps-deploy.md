@@ -221,11 +221,45 @@ Sin `OPENAI_API_KEY`, search/likes/admin funcionan; el chat responde fallback y 
 | `Can't reach database`                 | host en `DATABASE_URL` (`postgres` vs `127.0.0.1`), compose up                  |
 | Chroma “not ready” / KeyError          | imagen `chromadb/chroma:1.0.0`+ (cliente JS 3.x); `CHROMA_URL`                  |
 | Chat sin RAG                           | `OPENAI_API_KEY`; reindex; colección `marea_recipe_chunks`                      |
-| CORS                                   | `FRONTEND_URL` / `CORS_ORIGIN` = origen exacto del front                        |
+| CORS en upload (DevTools, sin ACAO)    | Suele ser **nginx 413/504**, no Nest: ver § nginx abajo (`client_max_body_size`) |
+| CORS                                   | `FRONTEND_URL` / `CORS_ORIGIN` = origen exacto del front (+ www si aplica)      |
 | Volumen Postgres “role does not exist” | volumen viejo con otro user → recrear volumen solo si es aceptable perder datos |
 
 
 
+
+## 10. nginx — API (`api.marea-alta.ec`)
+
+El marketplace permite fotos hasta **3 MB** (`PRODUCT_IMAGE_MAX_BYTES`). nginx por defecto limita el body a **1 MB** → responde **413** sin cabeceras CORS; el navegador muestra *“blocked by CORS… No Access-Control-Allow-Origin”* aunque el origen esté bien en Nest.
+
+Dentro del `server` / `location` que hace `proxy_pass` a la API:
+
+```nginx
+# Marketplace image upload (max 3 MB in API)
+client_max_body_size 4m;
+
+proxy_connect_timeout 60s;
+proxy_send_timeout 120s;
+proxy_read_timeout 120s;
+
+proxy_pass http://127.0.0.1:3000;
+proxy_http_version 1.1;
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+Tras `sudo nginx -t && sudo systemctl reload nginx`, un POST >1 MB debe llegar a Nest (401/503 con JSON y CORS si falta token o S3).
+
+Comprobar desde fuera (sin JWT, solo tamaño):
+
+```bash
+# ~2 MB — antes 413; tras el cambio 401 con Access-Control-Allow-Origin
+dd if=/dev/zero bs=1024 count=2048 2>/dev/null | curl -sS -D - -o /dev/null -X POST \
+  'https://api.marea-alta.ec/api/v0/marketplace/admin/products/UUID/images' \
+  -H 'Origin: https://www.marea-alta.ec' -F 'file=@-;filename=test.jpg'
+```
 
 ## Referencias
 
