@@ -230,13 +230,13 @@ Sin `OPENAI_API_KEY`, search/likes/admin funcionan; el chat responde fallback y 
 
 ## 10. nginx — API (`api.marea-alta.ec`)
 
-El marketplace permite fotos hasta **3 MB** (`PRODUCT_IMAGE_MAX_BYTES`). nginx por defecto limita el body a **1 MB** → responde **413** sin cabeceras CORS; el navegador muestra *“blocked by CORS… No Access-Control-Allow-Origin”* aunque el origen esté bien en Nest.
+El marketplace permite fotos hasta **512 KB** (`PRODUCT_IMAGE_MAX_BYTES`; el admin web comprime antes de subir). nginx por defecto limita el body a **1 MB** — con 512 KB en API suele bastar; si subís por otra vía, ver `client_max_body_size`.
 
 Dentro del `server` / `location` que hace `proxy_pass` a la API:
 
 ```nginx
-# Marketplace image upload (max 3 MB in API)
-client_max_body_size 4m;
+# Marketplace image upload (max 512 KB in API)
+client_max_body_size 1m;
 
 proxy_connect_timeout 60s;
 proxy_send_timeout 120s;

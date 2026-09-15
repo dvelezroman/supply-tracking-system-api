@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-export const PRODUCT_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+export const PRODUCT_IMAGE_MAX_BYTES = 512 * 1024;
 export const PRODUCT_IMAGE_MAX_COUNT = 6;
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff]);
@@ -26,7 +26,7 @@ export function sniffProductImageMime(bytes: Buffer): SniffedImageType {
     return 'image/webp';
   }
   throw new BadRequestException(
-    'Formato no permitido. Usa JPG, PNG o WebP (máx. 3 MB).',
+    'Formato no permitido. Usa JPG, PNG o WebP (máx. 512 KB).',
   );
 }
 
@@ -37,6 +37,6 @@ export function assertProductImageSize(byteSize: number): void {
     );
   }
   if (byteSize > PRODUCT_IMAGE_MAX_BYTES) {
-    throw new BadRequestException('La imagen supera 3 MB.');
+    throw new BadRequestException('La imagen supera 512 KB.');
   }
 }
