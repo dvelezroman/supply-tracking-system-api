@@ -175,9 +175,11 @@ El reverse proxy debe reenviar al puerto de la API (`3000` por defecto), p.ej. `
 
 ```bash
 cd web
-npm ci
+npm ci   # incluye devDependencies (@angular/cli); no uses --omit=dev aquí
 npm run build
 ```
+
+Si ves `ng: not found` o `Cannot find module '@angular/cli'`: no corriste `npm ci` en `web/`, o instalaste con `--omit=dev` / `NODE_ENV=production` (eso omite el CLI de Angular).
 
 Sirve `web/dist/supply-tracking-web` (o la carpeta que genere el build) con nginx/Caddy.
 
