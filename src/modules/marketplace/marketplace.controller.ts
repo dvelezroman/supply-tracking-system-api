@@ -27,6 +27,7 @@ import {
 } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { memoryStorage } from 'multer';
+import { SkipEnvelope } from '../../common/decorators/skip-envelope.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -63,6 +64,7 @@ export class MarketplacePublicController {
   }
 
   @Get('media/:imageId')
+  @SkipEnvelope()
   @Header('Cache-Control', 'public, max-age=86400')
   @ApiOperation({
     summary:
