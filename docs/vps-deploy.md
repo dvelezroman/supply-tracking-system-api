@@ -55,6 +55,25 @@ OPENAI_EMBED_MODEL=text-embedding-3-small
 
 Opcionales: SMTP, S3, branding (`LABEL_*`), etc. Ver `.env.example`.
 
+### S3 — fotos del marketplace
+
+Misma convención que ruta593: el nombre del bucket de AWS **no puede incluir `/`**. Usa:
+
+```bash
+AWS_S3_BUCKET_NAME=bitflow-production-files/mareaalta-marketplace
+S3_REGION=us-east-1
+# Vacío = tienda/admin cargan vía GET /api/v0/marketplace/media/:id (API hace GetObject)
+S3_PUBLIC_BASE_URL=
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+- Objetos: `mareaalta-marketplace/{sku}/{imageId}.jpg` (SKU del producto marketplace).
+- IAM mínimo: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` sobre el prefijo.
+- Si `S3_PUBLIC_BASE_URL` está vacío, URLs directas a S3 fallan (403 en bucket privado); el front usa el proxy de media.
+- En producción, sin `AWS_S3_BUCKET_NAME` el upload de imágenes responde 503 (sin fallback local).
+- Nunca committear claves IAM.
+
 **Producción:** `main.ts` exige `JWT_SECRET` no-default y `DATABASE_URL` válido.
 
 ## 3. Contenedores (Postgres + Chroma)

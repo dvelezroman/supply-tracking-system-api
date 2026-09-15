@@ -31,10 +31,21 @@ export default () => ({
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
   aws: {
-    region: process.env.AWS_REGION?.trim() || 'us-east-1',
+    region:
+      process.env.S3_REGION?.trim() ||
+      process.env.AWS_S3_REGION?.trim() ||
+      process.env.AWS_REGION?.trim() ||
+      'us-east-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID?.trim() || '',
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY?.trim() || '',
+    /** Prefer `AWS_S3_BUCKET_NAME=bucket/folder` (ruta593 style); falls back to `S3_BUCKET`. */
+    s3BucketName:
+      process.env.AWS_S3_BUCKET_NAME?.trim() ||
+      process.env.S3_BUCKET?.trim() ||
+      '',
+    /** @deprecated Use s3BucketName; kept for older env files. */
     s3Bucket: process.env.S3_BUCKET?.trim() || '',
+    s3KeyPrefix: process.env.S3_KEY_PREFIX?.trim() || '',
     s3PublicBaseUrl: process.env.S3_PUBLIC_BASE_URL?.trim() || '',
   },
   smtp: {

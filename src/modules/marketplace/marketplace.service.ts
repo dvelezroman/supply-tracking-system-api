@@ -9,8 +9,15 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MarketplaceOrderStatus, Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import {
+  assertProductImageSize,
+  PRODUCT_IMAGE_MAX_COUNT,
+  sniffProductImageMime,
+} from '../storage/marketplace-product-images.util';
+import { productImageObjectKey, DEFAULT_MARKETPLACE_KEY_PREFIX } from '../storage/s3-storage.util';
 import { StorageService } from '../storage/storage.service';
 import { CreateMarketplaceOrderDto } from './dto/create-order.dto';
 import {
@@ -145,7 +152,7 @@ export class MarketplaceService {
     const product = await this.findProductById(id);
     for (const img of product.images) {
       if (!img.key.startsWith('external:')) {
-        await this.storage.delete(img.key).catch(() => undefined);
+        await this.storage.deleteObject(img.key).catch(() => undefined);
       }
     }
     return this.repo.deleteProduct(id);
@@ -156,27 +163,64 @@ export class MarketplaceService {
     file: Express.Multer.File,
     isPrimary?: boolean,
   ) {
-    await this.findProductById(productId);
+    const product = await this.findProductById(productId);
     if (!file?.buffer?.length) {
       throw new BadRequestException('Image file is required');
     }
-    const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
-    if (!allowed.includes(file.mimetype)) {
-      throw new BadRequestException('Only JPEG, PNG, WebP or GIF images are allowed');
+    if (product.images.length >= PRODUCT_IMAGE_MAX_COUNT) {
+      throw new BadRequestException(
+        `Máximo ${PRODUCT_IMAGE_MAX_COUNT} fotos por producto.`,
+      );
     }
+    assertProductImageSize(file.size ?? file.buffer.length);
+    const mimeType = sniffProductImageMime(file.buffer);
+    const s3Config = this.storage.isS3Configured()
+      ? this.storage.requireConfig()
+      : null;
+    const keyPrefix = s3Config?.keyPrefix ?? DEFAULT_MARKETPLACE_KEY_PREFIX;
+    const imageId = randomUUID();
+    const storageKey = productImageObjectKey({
+      prefix: keyPrefix,
+      skuCode: product.sku,
+      imageId,
+      mimeType,
+    });
 
-    const uploaded = await this.storage.upload(
-      file.buffer,
-      file.mimetype,
-      file.originalname,
-    );
+    await this.storage.putObject({
+      key: storageKey,
+      body: file.buffer,
+      contentType: mimeType,
+    });
 
-    return this.attachImage(productId, uploaded.url, uploaded.key, isPrimary);
+    try {
+      if (isPrimary) {
+        await this.repo.clearPrimaryImages(productId);
+      }
+      const makePrimary = isPrimary || product.images.length === 0;
+      const url = this.storage.publicUrl(storageKey) ?? '';
+
+      return this.repo.createImage({
+        id: imageId,
+        product: { connect: { id: productId } },
+        url,
+        key: storageKey,
+        sortOrder: product.images.length,
+        isPrimary: makePrimary,
+      });
+    } catch (error) {
+      await this.storage.deleteObject(storageKey).catch(() => undefined);
+      throw error;
+    }
   }
 
   /** Register an external image URL without uploading to S3. */
   async addImageByUrl(productId: string, url: string, isPrimary?: boolean) {
-    await this.findProductById(productId);
+    const product = await this.findProductById(productId);
+    if (product.images.length >= PRODUCT_IMAGE_MAX_COUNT) {
+      throw new BadRequestException(
+        `Máximo ${PRODUCT_IMAGE_MAX_COUNT} fotos por producto.`,
+      );
+    }
     const normalized = url.trim();
     if (!/^https?:\/\//i.test(normalized)) {
       throw new BadRequestException('url must be an absolute http(s) URL');
@@ -208,6 +252,23 @@ export class MarketplaceService {
     });
   }
 
+  async getStoredImage(imageId: string) {
+    const image = await this.repo.findImageById(imageId);
+    if (!image) {
+      throw new NotFoundException('Image not found');
+    }
+    if (image.key.startsWith('external:')) {
+      throw new BadRequestException(
+        'External images are served by their public URL, not via media proxy',
+      );
+    }
+    const object = await this.storage.getObject(image.key);
+    return {
+      bytes: object.body,
+      mimeType: object.contentType,
+    };
+  }
+
   async deleteImage(productId: string, imageId: string) {
     await this.findProductById(productId);
     const image = await this.repo.findImageById(imageId);
@@ -215,7 +276,7 @@ export class MarketplaceService {
       throw new NotFoundException('Image not found');
     }
     if (!image.key.startsWith('external:')) {
-      await this.storage.delete(image.key).catch(() => undefined);
+      await this.storage.deleteObject(image.key).catch(() => undefined);
     }
     await this.repo.deleteImage(imageId);
     return { deleted: true };

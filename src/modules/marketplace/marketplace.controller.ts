@@ -3,11 +3,13 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
   Put,
   Query,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -26,6 +28,7 @@ import { memoryStorage } from 'multer';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { PRODUCT_IMAGE_MAX_BYTES } from '../storage/marketplace-product-images.util';
 import {
   CreateMarketplaceProductDto,
   MarketplaceProductQueryDto,
@@ -55,6 +58,20 @@ export class MarketplacePublicController {
       query.search,
       query.category,
     );
+  }
+
+  @Get('media/:imageId')
+  @Header('Cache-Control', 'public, max-age=86400')
+  @ApiOperation({
+    summary:
+      'Stream product image from S3 (used when S3_PUBLIC_BASE_URL is empty)',
+  })
+  async getMedia(@Param('imageId') imageId: string) {
+    const image = await this.marketplace.getStoredImage(imageId);
+    return new StreamableFile(image.bytes, {
+      type: image.mimeType,
+      disposition: 'inline',
+    });
   }
 
   @Get('products/:slug')
@@ -137,7 +154,7 @@ export class MarketplaceAdminController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: PRODUCT_IMAGE_MAX_BYTES },
     }),
   )
   uploadImage(

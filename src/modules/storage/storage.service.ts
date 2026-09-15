@@ -1,122 +1,228 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { randomUUID } from 'crypto';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { promises as fs } from 'fs';
 import * as path from 'path';
-
-export type UploadedObject = {
-  key: string;
-  url: string;
-};
+import {
+  publicObjectUrl,
+  readS3StorageConfig,
+  type S3StorageConfig,
+} from './s3-storage.util';
 
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
-  private readonly s3: S3Client | null;
-  private readonly bucket: string;
-  private readonly publicBaseUrl: string;
+  private client: S3Client | null = null;
   private readonly localUploadsDir: string;
-  private readonly useS3: boolean;
+  private readonly isProduction: boolean;
 
   constructor(private readonly config: ConfigService) {
-    const accessKeyId = this.config.get<string>('aws.accessKeyId') ?? '';
-    const secretAccessKey = this.config.get<string>('aws.secretAccessKey') ?? '';
-    const region = this.config.get<string>('aws.region') ?? 'us-east-1';
-    this.bucket = this.config.get<string>('aws.s3Bucket') ?? '';
-    this.publicBaseUrl = (this.config.get<string>('aws.s3PublicBaseUrl') ?? '').replace(
-      /\/$/,
-      '',
-    );
     this.localUploadsDir = path.join(process.cwd(), 'uploads', 'marketplace');
+    this.isProduction =
+      (this.config.get<string>('nodeEnv') ?? process.env.NODE_ENV) ===
+      'production';
 
-    this.useS3 = Boolean(accessKeyId && secretAccessKey && this.bucket);
-    this.s3 = this.useS3
-      ? new S3Client({
-          region,
-          credentials: { accessKeyId, secretAccessKey },
-        })
-      : null;
-
-    if (!this.useS3) {
-      this.logger.warn(
-        'S3 credentials/bucket not configured — using local uploads/marketplace stub',
-      );
+    if (!readS3StorageConfig()) {
+      if (this.isProduction) {
+        this.logger.error(
+          'S3 not configured in production — marketplace image uploads will fail',
+        );
+      } else {
+        this.logger.warn(
+          'S3 bucket not configured — using local uploads/marketplace stub',
+        );
+      }
     }
   }
 
-  async upload(
-    buffer: Buffer,
-    contentType: string,
-    originalName?: string,
-  ): Promise<UploadedObject> {
-    const ext = this.extensionFrom(contentType, originalName);
-    const key = `marketplace/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${ext}`;
-
-    if (this.useS3 && this.s3) {
-      await this.s3.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-          Body: buffer,
-          ContentType: contentType,
-        }),
+  requireConfig(): S3StorageConfig {
+    const config = readS3StorageConfig();
+    if (!config) {
+      throw new ServiceUnavailableException(
+        'S3 no configurado. Define AWS_S3_BUCKET_NAME (bucket/carpeta) y S3_REGION (credenciales en secrets).',
       );
-      const url = this.publicBaseUrl
-        ? `${this.publicBaseUrl}/${key}`
-        : `https://${this.bucket}.s3.amazonaws.com/${key}`;
-      return { key, url };
     }
-
-    const absPath = path.join(this.localUploadsDir, key.replace(/^marketplace\//, ''));
-    await fs.mkdir(path.dirname(absPath), { recursive: true });
-    await fs.writeFile(absPath, buffer);
-    // Local stub URLs point at API static /uploads
-    const apiBase = (
-      process.env.API_PUBLIC_URL?.trim() ||
-      `http://localhost:${this.config.get<string>('port') || 3000}`
-    ).replace(/\/$/, '');
-    const relative = key.replace(/^marketplace\//, '');
-    const url = `${apiBase}/uploads/marketplace/${relative}`;
-    return { key, url };
+    return config;
   }
 
-  async delete(key: string): Promise<void> {
+  /** True when S3 env is present (bucket + region). */
+  isS3Configured(): boolean {
+    return readS3StorageConfig() !== null;
+  }
+
+  publicUrl(storageKey: string): string | null {
+    const config = readS3StorageConfig();
+    return publicObjectUrl(config?.publicBaseUrl ?? null, storageKey);
+  }
+
+  async putObject(input: {
+    key: string;
+    body: Buffer;
+    contentType: string;
+  }): Promise<void> {
+    if (this.isS3Configured()) {
+      const config = this.requireConfig();
+      try {
+        await this.getClient(config).send(
+          new PutObjectCommand({
+            Bucket: config.bucket,
+            Key: input.key,
+            Body: input.body,
+            ContentType: input.contentType,
+            ContentLength: input.body.length,
+            CacheControl: 'public, max-age=31536000, immutable',
+          }),
+        );
+        return;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'unknown';
+        this.logger.error(`s3 put failed key=${input.key}: ${detail}`);
+        throw new ServiceUnavailableException('No se pudo subir la foto a S3.');
+      }
+    }
+
+    if (this.isProduction) {
+      throw new ServiceUnavailableException(
+        'S3 no configurado. Define AWS_S3_BUCKET_NAME (bucket/carpeta) y S3_REGION.',
+      );
+    }
+
+    await this.putLocal(input.key, input.body);
+  }
+
+  async getObject(
+    key: string,
+  ): Promise<{ body: Uint8Array; contentType: string }> {
+    if (this.isS3Configured()) {
+      const config = this.requireConfig();
+      try {
+        const result = await this.getClient(config).send(
+          new GetObjectCommand({
+            Bucket: config.bucket,
+            Key: key,
+          }),
+        );
+        const body = result.Body
+          ? await result.Body.transformToByteArray()
+          : new Uint8Array();
+        return {
+          body,
+          contentType: result.ContentType ?? 'application/octet-stream',
+        };
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'unknown';
+        this.logger.error(`s3 get failed key=${key}: ${detail}`);
+        throw new ServiceUnavailableException('No se pudo leer la foto en S3.');
+      }
+    }
+
+    if (this.isProduction) {
+      throw new ServiceUnavailableException('S3 no configurado.');
+    }
+
+    return this.getLocal(key);
+  }
+
+  async deleteObject(key: string): Promise<void> {
     if (!key) return;
 
-    if (this.useS3 && this.s3) {
-      await this.s3.send(
-        new DeleteObjectCommand({
-          Bucket: this.bucket,
-          Key: key,
-        }),
-      );
+    if (this.isS3Configured()) {
+      const config = this.requireConfig();
+      try {
+        await this.getClient(config).send(
+          new DeleteObjectCommand({
+            Bucket: config.bucket,
+            Key: key,
+          }),
+        );
+        return;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : 'unknown';
+        this.logger.error(`s3 delete failed key=${key}: ${detail}`);
+        throw new ServiceUnavailableException('No se pudo borrar la foto en S3.');
+      }
+    }
+
+    if (this.isProduction) {
       return;
     }
 
-    const absPath = path.join(
-      this.localUploadsDir,
-      key.replace(/^marketplace\//, ''),
-    );
+    await this.deleteLocal(key);
+  }
+
+  /** @deprecated Prefer putObject + productImageObjectKey. Kept for callers expecting {key,url}. */
+  async delete(key: string): Promise<void> {
+    await this.deleteObject(key);
+  }
+
+  private getClient(config: S3StorageConfig): S3Client {
+    if (this.client) {
+      return this.client;
+    }
+    const credentials =
+      config.accessKeyId && config.secretAccessKey
+        ? {
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey,
+          }
+        : undefined;
+    this.client = new S3Client({
+      region: config.region,
+      credentials,
+    });
+    return this.client;
+  }
+
+  private localAbsPath(key: string): string {
+    // Keys may be `mareaalta-marketplace/SKU/id.jpg` or legacy `marketplace/...`
+    const relative = key
+      .replace(/^mareaalta-marketplace\//, '')
+      .replace(/^marketplace\//, '');
+    return path.join(this.localUploadsDir, relative);
+  }
+
+  private async putLocal(key: string, body: Buffer): Promise<void> {
+    const absPath = this.localAbsPath(key);
+    await fs.mkdir(path.dirname(absPath), { recursive: true });
+    await fs.writeFile(absPath, body);
+  }
+
+  private async getLocal(
+    key: string,
+  ): Promise<{ body: Uint8Array; contentType: string }> {
+    const absPath = this.localAbsPath(key);
+    try {
+      const buf = await fs.readFile(absPath);
+      const ext = path.extname(absPath).toLowerCase();
+      const contentType =
+        ext === '.png'
+          ? 'image/png'
+          : ext === '.webp'
+            ? 'image/webp'
+            : 'image/jpeg';
+      return { body: new Uint8Array(buf), contentType };
+    } catch {
+      throw new ServiceUnavailableException(
+        `Local file not found for key=${key}`,
+      );
+    }
+  }
+
+  private async deleteLocal(key: string): Promise<void> {
+    const absPath = this.localAbsPath(key);
     try {
       await fs.unlink(absPath);
     } catch {
       this.logger.warn(`Local file not found for delete: ${absPath}`);
     }
-  }
-
-  private extensionFrom(contentType: string, originalName?: string): string {
-    if (originalName) {
-      const fromName = path.extname(originalName).toLowerCase();
-      if (fromName && fromName.length <= 8) return fromName;
-    }
-    const map: Record<string, string> = {
-      'image/jpeg': '.jpg',
-      'image/jpg': '.jpg',
-      'image/png': '.png',
-      'image/webp': '.webp',
-      'image/gif': '.gif',
-    };
-    return map[contentType] ?? '.bin';
   }
 }
