@@ -397,28 +397,51 @@ export class MarketplaceService {
       return updated;
     }
 
+    const emailBase = {
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+      customerPhone: order.customerPhone,
+      customerAddress: order.customerAddress,
+      notes: order.notes,
+      subtotalCents: order.subtotalCents,
+      currency: order.currency,
+      items: order.items.map((i) => ({
+        name: i.name,
+        sku: i.sku,
+        qty: i.qty,
+        unitPriceCents: i.unitPriceCents,
+      })),
+      fromName: settings.fromName,
+    };
+
+    const frontendBase = (
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
+    ).replace(/\/$/, '');
+    const orderConfirmationUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`;
+
     try {
-      await this.mail.sendMarketplaceOrder({
-        orderNumber: order.orderNumber,
-        customerName: order.customerName,
-        customerEmail: order.customerEmail,
-        customerPhone: order.customerPhone,
-        customerAddress: order.customerAddress,
-        notes: order.notes,
-        subtotalCents: order.subtotalCents,
-        currency: order.currency,
-        items: order.items.map((i) => ({
-          name: i.name,
-          sku: i.sku,
-          qty: i.qty,
-          unitPriceCents: i.unitPriceCents,
-        })),
-        to,
-        fromName: settings.fromName,
-      });
+      await this.mail.sendMarketplaceOrderToStore({ ...emailBase, to });
+
+      let customerEmailError: string | null = null;
+      try {
+        await this.mail.sendMarketplaceOrderToCustomer({
+          ...emailBase,
+          to: order.customerEmail.trim(),
+          orderConfirmationUrl,
+        });
+      } catch (customerErr) {
+        const reason =
+          customerErr instanceof Error ? customerErr.message : 'Email send failed';
+        customerEmailError = `Cliente: ${reason}`;
+        this.logger.error(
+          `Customer order email failed for ${order.orderNumber}: ${reason}`,
+        );
+      }
+
       return this.repo.updateOrder(order.id, {
         status: MarketplaceOrderStatus.EMAILED,
-        emailError: null,
+        emailError: customerEmailError,
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Email send failed';
