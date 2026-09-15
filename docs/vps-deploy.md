@@ -202,7 +202,7 @@ Errores típicos:
 | Mensaje | Causa | Fix |
 |--------|--------|-----|
 | `ng: not found` | Sin `node_modules/.bin` | `npm ci` en la carpeta del `package.json` web |
-| `Cannot find module .../@angular/cli/bin/ng.js` | **No hay `node_modules`** o instalación incompleta | `npm ci` (sin `--omit=dev`) |
+| `Cannot find module .../@angular/cli/bin/ng.js` / `[@angular/cli missing]` | Sin deps o **`npm config production=true`** (omite devDeps) | `npm ci --include=dev` en carpeta del `package.json` web; `npm config set production false` |
 | Build desde raíz monorepo sin wrapper | `package.json` está en `web/` | `cd web` o `npm run build --prefix web` |
 
 Sirve `web/dist/supply-tracking-web` (o la carpeta que genere el build) con nginx/Caddy.
