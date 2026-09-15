@@ -9,11 +9,13 @@ import {
   Post,
   Put,
   Query,
+  Res,
   StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
@@ -66,10 +68,17 @@ export class MarketplacePublicController {
     summary:
       'Stream product image from S3 (used when S3_PUBLIC_BASE_URL is empty)',
   })
-  async getMedia(@Param('imageId') imageId: string) {
-    const image = await this.marketplace.getStoredImage(imageId);
-    return new StreamableFile(image.bytes, {
-      type: image.mimeType,
+  async getMedia(
+    @Param('imageId') imageId: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const media = await this.marketplace.resolveProductImageMedia(imageId);
+    if (media.mode === 'redirect') {
+      res.redirect(302, media.url);
+      return;
+    }
+    return new StreamableFile(media.bytes, {
+      type: media.mimeType,
       disposition: 'inline',
     });
   }

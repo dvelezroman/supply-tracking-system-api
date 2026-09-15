@@ -252,21 +252,35 @@ export class MarketplaceService {
     });
   }
 
-  async getStoredImage(imageId: string) {
+  async resolveProductImageMedia(imageId: string) {
     const image = await this.repo.findImageById(imageId);
     if (!image) {
       throw new NotFoundException('Image not found');
     }
     if (image.key.startsWith('external:')) {
+      const url =
+        image.url?.trim() || image.key.slice('external:'.length).trim();
+      if (!/^https?:\/\//i.test(url)) {
+        throw new BadRequestException('External image URL is missing or invalid');
+      }
+      return { mode: 'redirect' as const, url };
+    }
+    const object = await this.storage.getObject(image.key);
+    return {
+      mode: 'stream' as const,
+      bytes: object.body,
+      mimeType: object.contentType,
+    };
+  }
+
+  async getStoredImage(imageId: string) {
+    const media = await this.resolveProductImageMedia(imageId);
+    if (media.mode === 'redirect') {
       throw new BadRequestException(
         'External images are served by their public URL, not via media proxy',
       );
     }
-    const object = await this.storage.getObject(image.key);
-    return {
-      bytes: object.body,
-      mimeType: object.contentType,
-    };
+    return { bytes: media.bytes, mimeType: media.mimeType };
   }
 
   async deleteImage(productId: string, imageId: string) {
