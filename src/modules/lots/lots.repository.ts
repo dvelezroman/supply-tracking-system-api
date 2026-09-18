@@ -37,6 +37,17 @@ export class LotsRepository {
     });
   }
 
+  /** Public lookup: exact base or suffixed variants (`base-01`, `base-A`, …). */
+  findLotCodesByBase(base: string) {
+    return this.prisma.lot.findMany({
+      where: {
+        OR: [{ lotCode: base }, { lotCode: { startsWith: `${base}-` } }],
+      },
+      select: { lotCode: true },
+      orderBy: { lotCode: 'asc' },
+    });
+  }
+
   findAll(params: {
     skip?: number;
     take?: number;

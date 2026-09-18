@@ -12,6 +12,8 @@ import { ApiOperation, ApiParam, ApiProduces, ApiQuery, ApiResponse, ApiTags } f
 import { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { PublicTraceService } from './public-trace.service';
+import { ResolveLotCodeQueryDto } from './dto/resolve-lot-code-query.dto';
+import { LotsService } from '../lots/lots.service';
 import { SkipEnvelope } from '../../common/decorators/skip-envelope.decorator';
 import { QrService } from '../../common/services/qr.service';
 import { PdfService, QR_PER_PAGE, type QrPdfLayout } from '../../common/services/pdf.service';
@@ -25,6 +27,7 @@ const MAX_COPIES = 500;
 export class PublicTraceController {
   constructor(
     private readonly publicTraceService: PublicTraceService,
+    private readonly lotsService: LotsService,
     private readonly qrService: QrService,
     private readonly pdfService: PdfService,
     private readonly configService: ConfigService,
@@ -100,6 +103,17 @@ export class PublicTraceController {
     res.setHeader('Content-Disposition', 'inline; filename="trace-qr-global.png"');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(png);
+  }
+
+  @Get('resolve')
+  @ApiOperation({
+    summary: 'Resolve lot code(s) from label segments — no auth required',
+    description:
+      'Builds the canonical base `P{pool}-{MMYY}-{presentation}-{packaging}` and returns matching lot codes (exact base or suffixed variants).',
+  })
+  @ApiResponse({ status: 200, description: 'Matching lot codes (may be empty)' })
+  resolveLotCode(@Query() query: ResolveLotCodeQueryDto) {
+    return this.lotsService.resolveLotCodesByLabelSegments(query);
   }
 
   @Get(':lotCode')

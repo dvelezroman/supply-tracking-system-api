@@ -179,6 +179,17 @@ export class LotsService {
     return { ...lot, availability };
   }
 
+  async resolveLotCodesByLabelSegments(params: {
+    poolNumber: number;
+    harvestMmyy: string;
+    presentationSegment: string;
+    packagingSegment: string;
+  }): Promise<{ lotCodes: string[]; base: string }> {
+    const base = `P${params.poolNumber}-${params.harvestMmyy}-${params.presentationSegment}-${params.packagingSegment}`;
+    const rows = await this.lotsRepository.findLotCodesByBase(base);
+    return { base, lotCodes: rows.map((r) => r.lotCode) };
+  }
+
   async findByLotCode(lotCode: string) {
     const lot = await this.lotsRepository.findByLotCode(lotCode);
     if (!lot) throw new NotFoundException(`Lot '${lotCode}' not found`);
