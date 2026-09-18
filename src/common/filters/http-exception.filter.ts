@@ -18,6 +18,21 @@ const BROWSER_PROBE_PATHS = new Set([
   '/robots.txt',
 ]);
 
+/** This API is REST-only (`/api/v0/*`). tRPC clients hitting `/api/trpc/*` are misconfigured probes. */
+const TRPC_PROBE_PREFIX = '/api/trpc';
+
+function isNoRouteProbe404(
+  status: number,
+  method: string,
+  path: string,
+): boolean {
+  if (status !== HttpStatus.NOT_FOUND || method !== 'GET') return false;
+  if (BROWSER_PROBE_PATHS.has(path)) return true;
+  return (
+    path === TRPC_PROBE_PREFIX || path.startsWith(`${TRPC_PROBE_PREFIX}/`)
+  );
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -37,13 +52,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Internal server error';
 
-    const probe404 =
-      status === HttpStatus.NOT_FOUND &&
-      request.method === 'GET' &&
-      BROWSER_PROBE_PATHS.has(request.path);
+    const probe404 = isNoRouteProbe404(
+      status,
+      request.method,
+      request.path,
+    );
 
     if (probe404) {
-      this.logger.debug(`${request.method} ${request.path} — ${status} (browser probe, no route)`);
+      this.logger.debug(
+        `${request.method} ${request.path} — ${status} (no route, ignored probe)`,
+      );
     } else {
       this.logger.error(
         `${request.method} ${request.url} — ${status}`,
