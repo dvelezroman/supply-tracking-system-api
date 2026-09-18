@@ -35,8 +35,10 @@ export class PaypalService implements OnModuleInit {
     return Boolean(id && secret);
   }
 
-  /** Whether mock provider is allowed (never in production without being forced off). */
+  /** Mock allowed in non-production, or when PAYPAL_FORCE_MOCK=true (incl. production). */
   canUseMock(): boolean {
+    const forceMock = this.config.get<boolean>('paypal.forceMock') === true;
+    if (forceMock) return true;
     const nodeEnv = this.config.get<string>('nodeEnv') || 'development';
     if (nodeEnv === 'production') return false;
     return true;
