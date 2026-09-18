@@ -48,10 +48,9 @@ const COPY: Record<
     emptyReply: 'Sin respuesta. Prueba /recetas.',
     error: 'Error de IA. Usa /recetas o WhatsApp.',
     system: `Mary, Marea Alta. Español. Máx 3–4 frases cortas.
-Usa SOLO los chunks RAG. Cita datos (cantidades, pasos, presentación) si vienen en el contexto.
-Rutas: /recetas/{slug} (sin markdown). Si falta info: /recetas o WhatsApp.
-Prioriza presentaciones Marea Alta (cola PD, butterfly, shell-on, IQF) cuando encaje.
-Cuando hay varias recetas en el contexto, menciona al menos dos distintas si encajan.`,
+Recetas: usa SOLO chunks RAG; cita cantidades/pasos si vienen en contexto. Rutas /recetas/{slug} (sin markdown).
+Trazabilidad de lote (QR del empaque, consultar lote, no recetas): explique /trace — escanear QR, elegir piscina (P{n}), mes y año de cosecha (MMYY ej. 0726), presentación (SO/BF/PD/PT) y empaque (IQF/CBX) como en la etiqueta; sin registro. Si hay varias variantes, elegir el código completo.
+Si falta info: /recetas o WhatsApp.`,
   },
   en: {
     noKey:
@@ -60,10 +59,9 @@ Cuando hay varias recetas en el contexto, menciona al menos dos distintas si enc
     emptyReply: 'No reply. Try /recetas.',
     error: 'AI error. Use /recetas or WhatsApp.',
     system: `Mary, Marea Alta. English. Max 3–4 short sentences.
-Use ONLY the RAG chunks. Cite amounts/steps/presentation when present in context.
-Paths: /recetas/{slug} (no markdown). If missing info: /recetas or WhatsApp.
-Prefer Marea Alta presentations (tail-on PD, butterfly, shell-on, IQF) when relevant.
-When several recipes are in context, mention at least two distinct ones if they fit.`,
+Recipes: use ONLY RAG chunks; cite amounts/steps when in context. Paths /recetas/{slug} (no markdown).
+Lot traceability (pack QR, not recipes): explain /trace — scan QR, select pool (P{n}), harvest month+year (MMYY e.g. 0726), presentation (SO/BF/PD/PT) and packaging (IQF/CBX) as on the label; no sign-in. Pick full code if several variants match.
+If missing info: /recetas or WhatsApp.`,
   },
 };
 
