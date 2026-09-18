@@ -30,6 +30,7 @@ import {
   UpdateMarketplaceProductDto,
   UpdateMarketplaceSettingsDto,
 } from './dto/marketplace.dto';
+import { clampDiscountPercent } from './marketplace-pricing.util';
 import { MarketplaceRepository } from './marketplace.repository';
 
 @Injectable()
@@ -66,6 +67,8 @@ export class MarketplaceService {
       description: dto.description?.trim(),
       category: dto.category?.trim(),
       priceCents: dto.priceCents,
+      discountPercent: clampDiscountPercent(dto.discountPercent),
+      promoDiscountPercent: clampDiscountPercent(dto.promoDiscountPercent),
       currency: (dto.currency ?? 'USD').toUpperCase(),
       stockQty: dto.stockQty ?? 0,
       published: dto.published ?? false,
@@ -138,6 +141,12 @@ export class MarketplaceService {
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.category !== undefined) data.category = dto.category;
     if (dto.priceCents !== undefined) data.priceCents = dto.priceCents;
+    if (dto.discountPercent !== undefined) {
+      data.discountPercent = clampDiscountPercent(dto.discountPercent);
+    }
+    if (dto.promoDiscountPercent !== undefined) {
+      data.promoDiscountPercent = clampDiscountPercent(dto.promoDiscountPercent);
+    }
     if (dto.currency !== undefined) data.currency = dto.currency.toUpperCase();
     if (dto.stockQty !== undefined) data.stockQty = dto.stockQty;
     if (dto.published !== undefined) data.published = dto.published;
@@ -420,11 +429,16 @@ export class MarketplaceService {
       customerAddress: order.customerAddress,
       notes: order.notes,
       subtotalCents: order.subtotalCents,
+      listSubtotalCents: order.listSubtotalCents,
+      discountTotalCents: order.discountTotalCents,
       currency: order.currency,
       items: order.items.map((i) => ({
         name: i.name,
         sku: i.sku,
         qty: i.qty,
+        listUnitPriceCents: i.listUnitPriceCents,
+        discountPercent: i.discountPercent,
+        promoDiscountPercent: i.promoDiscountPercent,
         unitPriceCents: i.unitPriceCents,
       })),
       fromName: settings.fromName,
@@ -504,11 +518,16 @@ export class MarketplaceService {
       status: order.status,
       customerName: order.customerName,
       subtotalCents: order.subtotalCents,
+      listSubtotalCents: order.listSubtotalCents,
+      discountTotalCents: order.discountTotalCents,
       currency: order.currency,
       items: order.items.map((i) => ({
         name: i.name,
         sku: i.sku,
         qty: i.qty,
+        listUnitPriceCents: i.listUnitPriceCents,
+        discountPercent: i.discountPercent,
+        promoDiscountPercent: i.promoDiscountPercent,
         unitPriceCents: i.unitPriceCents,
         imageUrl: i.imageUrl,
       })),

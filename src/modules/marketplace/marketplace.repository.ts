@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { MarketplaceOrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  clampDiscountPercent,
+  effectiveUnitPriceCents,
+} from './marketplace-pricing.util';
 
 const productInclude = {
   images: { orderBy: [{ isPrimary: 'desc' as const }, { sortOrder: 'asc' as const }] },
@@ -143,7 +147,18 @@ export class MarketplaceRepository {
   }) {
     return this.prisma.$transaction(async (tx) => {
       let subtotalCents = 0;
-      const resolved: typeof args.lines = [];
+      let listSubtotalCents = 0;
+      const resolved: Array<{
+        productId: string;
+        name: string;
+        sku: string;
+        listUnitPriceCents: number;
+        discountPercent: number;
+        promoDiscountPercent: number;
+        unitPriceCents: number;
+        qty: number;
+        imageUrl?: string | null;
+      }> = [];
       const currencies = new Set<string>();
 
       for (const line of args.lines) {
@@ -169,12 +184,25 @@ export class MarketplaceRepository {
           data: { stockQty: { decrement: line.qty } },
         });
         currencies.add(product.currency.toUpperCase());
-        const unitPriceCents = product.priceCents;
+        const listUnitPriceCents = product.priceCents;
+        const discountPercent = clampDiscountPercent(product.discountPercent);
+        const promoDiscountPercent = clampDiscountPercent(
+          product.promoDiscountPercent,
+        );
+        const unitPriceCents = effectiveUnitPriceCents({
+          priceCents: listUnitPriceCents,
+          discountPercent,
+          promoDiscountPercent,
+        });
+        listSubtotalCents += listUnitPriceCents * line.qty;
         subtotalCents += unitPriceCents * line.qty;
         resolved.push({
           productId: product.id,
           name: product.name,
           sku: product.sku,
+          listUnitPriceCents,
+          discountPercent,
+          promoDiscountPercent,
           unitPriceCents,
           qty: line.qty,
           imageUrl: product.images[0]?.url ?? null,
@@ -195,6 +223,8 @@ export class MarketplaceRepository {
           customerAddress: args.customerAddress,
           notes: args.notes,
           subtotalCents,
+          listSubtotalCents,
+          discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
           currency: orderCurrency,
           status: MarketplaceOrderStatus.PENDING,
           items: {
@@ -202,6 +232,9 @@ export class MarketplaceRepository {
               productId: r.productId,
               name: r.name,
               sku: r.sku,
+              listUnitPriceCents: r.listUnitPriceCents,
+              discountPercent: r.discountPercent,
+              promoDiscountPercent: r.promoDiscountPercent,
               unitPriceCents: r.unitPriceCents,
               qty: r.qty,
               imageUrl: r.imageUrl,

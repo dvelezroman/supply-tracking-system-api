@@ -2,6 +2,9 @@ export type OrderEmailLine = {
   name: string;
   sku: string;
   qty: number;
+  listUnitPriceCents?: number;
+  discountPercent?: number;
+  promoDiscountPercent?: number;
   unitPriceCents: number;
 };
 
@@ -13,6 +16,8 @@ export type OrderEmailBase = {
   customerAddress?: string | null;
   notes?: string | null;
   subtotalCents: number;
+  listSubtotalCents?: number;
+  discountTotalCents?: number;
   currency: string;
   items: OrderEmailLine[];
   fromName?: string | null;
@@ -45,10 +50,24 @@ export function buildPlainOrderSummary(
     payload.customerAddress ? `Dir: ${payload.customerAddress}` : '',
     payload.notes ? `Notas: ${payload.notes}` : '',
     '',
-    ...payload.items.map(
-      (i) =>
-        `- ${i.name} (${i.sku}) x${i.qty} @ ${formatMoney(i.unitPriceCents, payload.currency)}`,
-    ),
+    ...payload.items.map((i) => {
+      const unit = formatMoney(i.unitPriceCents, payload.currency);
+      const base = i.discountPercent ?? 0;
+      const promo = i.promoDiscountPercent ?? 0;
+      const pct = Math.min(100, base + promo);
+      const list = i.listUnitPriceCents;
+      if (pct > 0 && list != null && list > i.unitPriceCents) {
+        const breakdown =
+          promo > 0 ? `−${pct}% (${base}%+${promo}% promo)` : `−${pct}%`;
+        return `- ${i.name} (${i.sku}) x${i.qty} @ ${unit} (PVP ${formatMoney(list, payload.currency)}, ${breakdown})`;
+      }
+      return `- ${i.name} (${i.sku}) x${i.qty} @ ${unit}`;
+    }),
+    ...(payload.discountTotalCents && payload.discountTotalCents > 0
+      ? [
+          `Descuento total: −${formatMoney(payload.discountTotalCents, payload.currency)}`,
+        ]
+      : []),
     `Subtotal: ${formatMoney(payload.subtotalCents, payload.currency)}`,
   ]
     .filter(Boolean)

@@ -172,7 +172,12 @@ model MarketplaceProduct {
   name           String
   description    String?
   category       String?
+  /// Public list price (PVP) in cents.
   priceCents     Int
+  /// Percent discount applied to PVP at checkout (0–100).
+  discountPercent Int    @default(0)
+  /// Extra promotional % off PVP (stacks with discountPercent, capped at 100 total).
+  promoDiscountPercent Int @default(0)
   currency       String  @default("USD")
   stockQty       Int     @default(0)
   published      Boolean @default(false)
@@ -218,6 +223,10 @@ model MarketplaceOrder {
   customerAddress String?
   notes          String?
   subtotalCents  Int
+  /// Sum of PVP × qty before discounts.
+  listSubtotalCents Int               @default(0)
+  /// Total savings (listSubtotalCents − subtotalCents).
+  discountTotalCents Int              @default(0)
   currency       String                 @default("USD")
   /// Set when email send failed (SMTP missing or transport error).
   emailError     String?
@@ -240,6 +249,12 @@ model MarketplaceOrderItem {
   product        MarketplaceProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
   name           String
   sku            String
+  /// PVP per unit at order time.
+  listUnitPriceCents Int
+  /// Discount % applied to PVP at order time.
+  discountPercent    Int @default(0)
+  /// Extra promo % applied at order time (stacked with discountPercent).
+  promoDiscountPercent Int @default(0)
   unitPriceCents Int
   qty            Int
   imageUrl       String?

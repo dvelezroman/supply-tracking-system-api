@@ -6,6 +6,7 @@ import {
   IsString,
   IsUrl,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -47,10 +48,32 @@ export class CreateMarketplaceProductDto {
   @MaxLength(100)
   category?: string;
 
-  @ApiProperty({ example: 2499, description: 'Price in cents (USD)' })
+  @ApiProperty({ example: 2499, description: 'PVP / list price in cents' })
   @IsInt()
   @Min(0)
   priceCents: number;
+
+  @ApiPropertyOptional({
+    example: 10,
+    default: 0,
+    description: 'Percent discount off PVP (0–100)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  @ApiPropertyOptional({
+    example: 5,
+    default: 0,
+    description: 'Extra promotional % off PVP (stacks with discountPercent)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  promoDiscountPercent?: number;
 
   @ApiPropertyOptional({ example: 'USD', default: 'USD' })
   @IsOptional()
@@ -113,6 +136,22 @@ export class UpdateMarketplaceProductDto {
   @IsInt()
   @Min(0)
   priceCents?: number;
+
+  @ApiPropertyOptional({ description: 'Percent discount off PVP (0–100)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  @ApiPropertyOptional({
+    description: 'Extra promotional % off PVP (stacks with discountPercent)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  promoDiscountPercent?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

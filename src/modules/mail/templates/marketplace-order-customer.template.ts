@@ -24,6 +24,14 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
     .map((i) => {
       const lineTotal = formatMoney(i.unitPriceCents * i.qty, payload.currency);
       const unit = formatMoney(i.unitPriceCents, payload.currency);
+      const base = i.discountPercent ?? 0;
+      const promo = i.promoDiscountPercent ?? 0;
+      const pct = Math.min(100, base + promo);
+      const list = i.listUnitPriceCents;
+      const discountNote =
+        pct > 0 && list != null && list > i.unitPriceCents
+          ? `<div style="font-size:12px;color:#059669;margin-top:6px;">PVP ${formatMoney(list, payload.currency)} · −${pct}%${promo > 0 ? ` (${base}%+${promo}% promo)` : ''}</div>`
+          : '';
       return `<tr>
         <td style="padding:0 0 10px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
@@ -31,6 +39,7 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
               <td style="padding:14px 16px;">
                 <div style="font-size:15px;font-weight:600;color:#0f172a;line-height:1.35;">${escapeHtml(i.name)}</div>
                 <div style="font-size:12px;color:#64748b;margin-top:4px;">${i.qty} × ${unit}</div>
+                ${discountNote}
                 <div style="font-size:16px;font-weight:700;color:#0a2647;margin-top:10px;">${lineTotal}</div>
               </td>
             </tr>
@@ -64,6 +73,14 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
                 <tr>
                   <td style="padding:16px;background:#0a2647;border-radius:12px;">
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      ${
+                        payload.discountTotalCents && payload.discountTotalCents > 0
+                          ? `<tr>
+                        <td style="font-size:13px;color:rgba(255,255,255,.75);padding-bottom:8px;">Descuento</td>
+                        <td style="font-size:14px;font-weight:600;color:#86efac;text-align:right;padding-bottom:8px;">−${formatMoney(payload.discountTotalCents, payload.currency)}</td>
+                      </tr>`
+                          : ''
+                      }
                       <tr>
                         <td style="font-size:14px;font-weight:600;color:rgba(255,255,255,.85);">Subtotal</td>
                         <td style="font-size:20px;font-weight:700;color:#ffb4b4;text-align:right;">${formatMoney(payload.subtotalCents, payload.currency)}</td>
