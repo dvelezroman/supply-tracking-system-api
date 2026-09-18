@@ -875,11 +875,13 @@ async function main() {
     create: {
       id: 'default',
       storeEnabled: true,
+      onlinePaymentsEnabled: true,
       orderNotificationEmail: process.env.CONTACT_EMAIL?.trim() || 'pedidos@mareaalta.demo',
       fromName: 'Marea Alta Tienda',
     },
     update: {
       storeEnabled: true,
+      onlinePaymentsEnabled: true,
       fromName: 'Marea Alta Tienda',
     },
   });

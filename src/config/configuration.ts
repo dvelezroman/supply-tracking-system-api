@@ -67,4 +67,13 @@ export default () => ({
       process.env.CHROMA_COLLECTION?.trim() || 'marea_recipe_chunks',
   },
   spoonacularApiKey: process.env.SPOONACULAR_API_KEY?.trim() || '',
+  paypal: {
+    clientId: process.env.PAYPAL_CLIENT_ID?.trim() || '',
+    clientSecret: process.env.PAYPAL_CLIENT_SECRET?.trim() || '',
+    mode: (process.env.PAYPAL_MODE?.trim() || 'sandbox') as 'sandbox' | 'live',
+    webhookId: process.env.PAYPAL_WEBHOOK_ID?.trim() || '',
+    forceMock:
+      process.env.PAYPAL_FORCE_MOCK === 'true' ||
+      process.env.PAYPAL_FORCE_MOCK === '1',
+  },
 });

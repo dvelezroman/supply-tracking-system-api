@@ -18,6 +18,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import {
+  CapturePayPalOrderDto,
   CreateMarketplaceOrderDto,
   MarketplaceOrderQueryDto,
 } from './dto/create-order.dto';
@@ -29,11 +30,22 @@ export class MarketplaceOrdersPublicController {
   constructor(private readonly marketplace: MarketplaceService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Place marketplace order (guest checkout)' })
+  @ApiOperation({
+    summary: 'Place marketplace order (guest checkout: EMAIL or PAYPAL)',
+  })
   @ApiResponse({ status: 201, description: 'Order created' })
   @ApiResponse({ status: 409, description: 'Insufficient stock' })
   create(@Body() dto: CreateMarketplaceOrderDto) {
     return this.marketplace.placeOrder(dto);
+  }
+
+  @Post(':orderNumber/paypal/capture')
+  @ApiOperation({ summary: 'Capture PayPal payment after buyer return' })
+  capturePayPal(
+    @Param('orderNumber') orderNumber: string,
+    @Body() dto: CapturePayPalOrderDto,
+  ) {
+    return this.marketplace.capturePayPalOrder(orderNumber, dto);
   }
 
   @Get(':orderNumber')
@@ -69,7 +81,7 @@ export class MarketplaceOrdersAdminController {
   }
 
   @Post(':id/cancel')
-  @ApiOperation({ summary: 'Cancel order and restock inventory' })
+  @ApiOperation({ summary: 'Cancel order and restock inventory when applicable' })
   cancel(@Param('id') id: string) {
     return this.marketplace.cancelOrder(id);
   }

@@ -6,12 +6,18 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { MarketplaceOrderStatus, Prisma } from '@prisma/client';
+import {
+  MarketplaceOrderStatus,
+  Prisma,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { PaypalService } from '../paypal/paypal.service';
+import { PaypalWebhookService } from '../paypal/paypal-webhook.service';
 import {
   assertProductImageSize,
   PRODUCT_IMAGE_MAX_COUNT,
@@ -24,7 +30,11 @@ import {
   readS3StorageConfig,
 } from '../storage/s3-storage.util';
 import { StorageService } from '../storage/storage.service';
-import { CreateMarketplaceOrderDto } from './dto/create-order.dto';
+import {
+  CapturePayPalOrderDto,
+  CreateMarketplaceOrderDto,
+  OrderPaymentMethodDto,
+} from './dto/create-order.dto';
 import {
   CreateMarketplaceProductDto,
   UpdateMarketplaceProductDto,
@@ -34,7 +44,7 @@ import { clampDiscountPercent } from './marketplace-pricing.util';
 import { MarketplaceRepository } from './marketplace.repository';
 
 @Injectable()
-export class MarketplaceService {
+export class MarketplaceService implements OnModuleInit {
   private readonly logger = new Logger(MarketplaceService.name);
 
   constructor(
@@ -43,8 +53,36 @@ export class MarketplaceService {
     private readonly mail: MailService,
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly paypal: PaypalService,
+    private readonly paypalWebhooks: PaypalWebhookService,
   ) {}
 
+  onModuleInit(): void {
+    this.paypalWebhooks.setHandler(async ({ eventType, paypalOrderId }) => {
+      if (
+        !paypalOrderId ||
+        (eventType !== 'PAYMENT.CAPTURE.COMPLETED' &&
+          eventType !== 'CHECKOUT.ORDER.APPROVED')
+      ) {
+        return;
+      }
+      const order = await this.repo.findOrderByPaypalOrderId(paypalOrderId);
+      if (!order || order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+        return;
+      }
+      try {
+        await this.capturePayPalOrder(order.orderNumber, {
+          paypalOrderId,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Webhook capture failed for ${order.orderNumber}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    });
+  }
   // ─── Products ─────────────────────────────────────────────────────────────
 
   async createProduct(dto: CreateMarketplaceProductDto) {
@@ -335,7 +373,15 @@ export class MarketplaceService {
 
   async getPublicSettings() {
     const s = await this.repo.getSettings();
-    return { storeEnabled: s.storeEnabled };
+    const paypalMode = this.paypal.isCheckoutAvailable(s.onlinePaymentsEnabled)
+      ? this.paypal.getProviderMode()
+      : 'off';
+    return {
+      storeEnabled: s.storeEnabled,
+      onlinePaymentsEnabled: s.onlinePaymentsEnabled,
+      paypalAvailable: this.paypal.isCheckoutAvailable(s.onlinePaymentsEnabled),
+      paypalMode,
+    };
   }
 
   async getAdminSettings() {
@@ -348,6 +394,9 @@ export class MarketplaceService {
       data.orderNotificationEmail = dto.orderNotificationEmail?.trim() || null;
     }
     if (dto.storeEnabled !== undefined) data.storeEnabled = dto.storeEnabled;
+    if (dto.onlinePaymentsEnabled !== undefined) {
+      data.onlinePaymentsEnabled = dto.onlinePaymentsEnabled;
+    }
     if (dto.fromName !== undefined) {
       data.fromName = dto.fromName?.trim() || null;
     }
@@ -357,6 +406,14 @@ export class MarketplaceService {
   // ─── Orders ───────────────────────────────────────────────────────────────
 
   async placeOrder(dto: CreateMarketplaceOrderDto) {
+    const method = dto.paymentMethod ?? OrderPaymentMethodDto.EMAIL;
+    if (method === OrderPaymentMethodDto.PAYPAL) {
+      return this.startPayPalCheckout(dto);
+    }
+    return this.placeOrderEmail(dto);
+  }
+
+  async placeOrderEmail(dto: CreateMarketplaceOrderDto) {
     const settings = await this.repo.getSettings();
     if (!settings.storeEnabled) {
       throw new BadRequestException('Store is currently disabled');
@@ -383,42 +440,197 @@ export class MarketplaceService {
         })),
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const stock = this.parseStockError(msg);
-      if (stock) {
-        throw new HttpException(
-          {
-            message: 'Insufficient stock',
-            details: [stock],
-          },
-          HttpStatus.CONFLICT,
-        );
-      }
-      if (msg.startsWith('UNAVAILABLE:')) {
-        const productId = msg.slice('UNAVAILABLE:'.length);
-        throw new BadRequestException({
-          message: 'One or more products are unavailable',
-          details: [{ productId }],
-        });
-      }
-      if (msg === 'MIXED_CURRENCY') {
-        throw new BadRequestException(
-          'Cart contains products with different currencies',
-        );
-      }
-      throw err;
+      this.rethrowOrderPlacementError(err);
     }
 
+    return this.sendOrderEmails(order, settings, MarketplaceOrderStatus.PENDING);
+  }
+
+  async startPayPalCheckout(dto: CreateMarketplaceOrderDto) {
+    const settings = await this.repo.getSettings();
+    if (!settings.storeEnabled) {
+      throw new BadRequestException('Store is currently disabled');
+    }
+    if (!this.paypal.isCheckoutAvailable(settings.onlinePaymentsEnabled)) {
+      throw new BadRequestException('Online payments are not available');
+    }
+
+    const mergedLines = this.mergeOrderLines(dto.items);
+    const orderNumber = this.generateOrderNumber();
+    let order;
+    try {
+      order = await this.repo.createPendingPayPalOrder({
+        orderNumber,
+        customerName: dto.customerName.trim(),
+        customerEmail: dto.customerEmail.trim().toLowerCase(),
+        customerPhone: dto.customerPhone?.trim(),
+        customerAddress: dto.customerAddress?.trim(),
+        notes: dto.notes?.trim(),
+        currency: 'USD',
+        lines: mergedLines,
+      });
+    } catch (err) {
+      this.rethrowOrderPlacementError(err);
+    }
+
+    const frontendBase = (
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
+    ).replace(/\/$/, '');
+    const returnUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}/pago`;
+    const cancelUrl = `${frontendBase}/tienda/checkout?cancelled=1&orderNumber=${encodeURIComponent(order.orderNumber)}`;
+
+    try {
+      const created = await this.paypal.createCheckoutOrder({
+        orderNumber: order.orderNumber,
+        amountCents: order.subtotalCents,
+        currency: order.currency,
+        returnUrl,
+        cancelUrl,
+      });
+      const updated = await this.repo.updateOrder(order.id, {
+        paypalOrderId: created.paypalOrderId,
+      });
+      return {
+        ...updated,
+        approveUrl: created.approveUrl,
+        paypalMode: this.paypal.getProviderMode(),
+      };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'PayPal create failed';
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: reason,
+      });
+      throw new BadRequestException(`Unable to start PayPal checkout: ${reason}`);
+    }
+  }
+
+  async capturePayPalOrder(
+    orderNumber: string,
+    dto: CapturePayPalOrderDto,
+  ) {
+    const order = await this.repo.findOrderByNumber(orderNumber);
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (
+      order.status === MarketplaceOrderStatus.EMAILED ||
+      order.status === MarketplaceOrderStatus.PAID ||
+      (order.paypalCaptureId &&
+        order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT)
+    ) {
+      return order;
+    }
+
+    if (order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+      throw new BadRequestException('Order is not awaiting payment');
+    }
+    if (
+      order.paypalOrderId &&
+      order.paypalOrderId !== dto.paypalOrderId
+    ) {
+      throw new BadRequestException('PayPal order id mismatch');
+    }
+
+    if (
+      this.paypal.getProviderMode() === 'mock' &&
+      dto.sig &&
+      !this.paypal.verifyMockSignature(
+        dto.paypalOrderId,
+        order.orderNumber,
+        dto.sig,
+      )
+    ) {
+      throw new BadRequestException('Invalid mock payment signature');
+    }
+
+    try {
+      await this.repo.decrementStockForOrder(order.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: msg,
+      });
+      this.rethrowOrderPlacementError(err);
+    }
+
+    const capture = await this.paypal.captureOrder(dto.paypalOrderId);
+    if (capture.status !== 'COMPLETED') {
+      // Stock already decremented — restock so inventory stays accurate.
+      try {
+        await this.repo.restockOrderItems(order.id);
+      } catch (restockErr) {
+        this.logger.error(
+          `Failed to restock after capture failure ${order.orderNumber}: ${
+            restockErr instanceof Error ? restockErr.message : String(restockErr)
+          }`,
+        );
+      }
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: `Capture status: ${capture.status}`,
+      });
+      throw new BadRequestException('PayPal capture failed');
+    }
+
+    if (
+      capture.amountCents > 0 &&
+      capture.amountCents !== order.subtotalCents
+    ) {
+      this.logger.warn(
+        `PayPal amount mismatch for ${order.orderNumber}: expected ${order.subtotalCents}, got ${capture.amountCents}`,
+      );
+    }
+
+    const paid = await this.repo.updateOrder(order.id, {
+      status: MarketplaceOrderStatus.PAID,
+      paypalCaptureId: capture.captureId,
+      paidAt: new Date(),
+      paymentError: null,
+    });
+
+    const settings = await this.repo.getSettings();
+    return this.sendOrderEmails(paid, settings, MarketplaceOrderStatus.PAID);
+  }
+
+  private async sendOrderEmails(
+    order: {
+      id: string;
+      orderNumber: string;
+      customerName: string;
+      customerEmail: string;
+      customerPhone: string | null;
+      customerAddress: string | null;
+      notes: string | null;
+      subtotalCents: number;
+      listSubtotalCents: number;
+      discountTotalCents: number;
+      currency: string;
+      items: Array<{
+        name: string;
+        sku: string;
+        qty: number;
+        listUnitPriceCents: number;
+        discountPercent: number;
+        promoDiscountPercent: number;
+        unitPriceCents: number;
+      }>;
+    },
+    settings: {
+      orderNotificationEmail: string | null;
+      fromName: string | null;
+    },
+    emailFailureStatus: MarketplaceOrderStatus = MarketplaceOrderStatus.PENDING,
+  ) {
     const to =
       settings.orderNotificationEmail?.trim() ||
       this.config.get<string>('contactEmail')?.trim() ||
       '';
 
     if (!to) {
-      const updated = await this.repo.updateOrder(order.id, {
+      return this.repo.updateOrder(order.id, {
         emailError: 'No order notification email configured',
       });
-      return updated;
     }
 
     const emailBase = {
@@ -476,10 +688,37 @@ export class MarketplaceService {
       const reason = err instanceof Error ? err.message : 'Email send failed';
       this.logger.error(`Order email failed for ${order.orderNumber}: ${reason}`);
       return this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PENDING,
+        status: emailFailureStatus,
         emailError: reason,
       });
     }
+  }
+
+  private rethrowOrderPlacementError(err: unknown): never {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stock = this.parseStockError(msg);
+    if (stock) {
+      throw new HttpException(
+        {
+          message: 'Insufficient stock',
+          details: [stock],
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (msg.startsWith('UNAVAILABLE:')) {
+      const productId = msg.slice('UNAVAILABLE:'.length);
+      throw new BadRequestException({
+        message: 'One or more products are unavailable',
+        details: [{ productId }],
+      });
+    }
+    if (msg === 'MIXED_CURRENCY') {
+      throw new BadRequestException(
+        'Cart contains products with different currencies',
+      );
+    }
+    throw err;
   }
 
   async listOrders(page?: number, limit?: number, status?: string, search?: string) {
@@ -516,11 +755,13 @@ export class MarketplaceService {
     return {
       orderNumber: order.orderNumber,
       status: order.status,
+      paymentMethod: order.paymentMethod,
       customerName: order.customerName,
       subtotalCents: order.subtotalCents,
       listSubtotalCents: order.listSubtotalCents,
       discountTotalCents: order.discountTotalCents,
       currency: order.currency,
+      paidAt: order.paidAt,
       items: order.items.map((i) => ({
         name: i.name,
         sku: i.sku,
@@ -539,6 +780,12 @@ export class MarketplaceService {
     const order = await this.findOrderById(id);
     if (order.status === MarketplaceOrderStatus.CANCELLED) {
       throw new BadRequestException('Order already cancelled');
+    }
+    if (order.status === MarketplaceOrderStatus.AWAITING_PAYMENT) {
+      return this.repo.cancelAwaitingPayment(id);
+    }
+    if (order.status === MarketplaceOrderStatus.PAYMENT_FAILED) {
+      return this.repo.cancelAwaitingPayment(id);
     }
     return this.repo.restockOrderItems(id);
   }

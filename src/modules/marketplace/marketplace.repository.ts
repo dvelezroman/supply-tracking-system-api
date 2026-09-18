@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { MarketplaceOrderStatus, Prisma } from '@prisma/client';
+import {
+  MarketplaceOrderStatus,
+  MarketplacePaymentMethod,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   clampDiscountPercent,
@@ -108,6 +112,7 @@ export class MarketplaceRepository {
       create: {
         id: 'default',
         storeEnabled: true,
+        onlinePaymentsEnabled: false,
         orderNotificationEmail:
           typeof data.orderNotificationEmail === 'string'
             ? data.orderNotificationEmail
@@ -127,7 +132,89 @@ export class MarketplaceRepository {
     });
   }
 
-  /** Atomic stock decrement + order create inside a transaction. */
+  private async resolveLines(
+    tx: Prisma.TransactionClient,
+    lines: Array<{ productId: string; qty: number }>,
+    opts: { decrementStock: boolean },
+  ) {
+    let subtotalCents = 0;
+    let listSubtotalCents = 0;
+    const resolved: Array<{
+      productId: string;
+      name: string;
+      sku: string;
+      listUnitPriceCents: number;
+      discountPercent: number;
+      promoDiscountPercent: number;
+      unitPriceCents: number;
+      qty: number;
+      imageUrl?: string | null;
+    }> = [];
+    const currencies = new Set<string>();
+
+    for (const line of lines) {
+      const product = await tx.marketplaceProduct.findUnique({
+        where: { id: line.productId },
+        include: {
+          images: {
+            orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+            take: 1,
+          },
+        },
+      });
+      if (!product || !product.published) {
+        throw new Error(`UNAVAILABLE:${line.productId}`);
+      }
+      if (product.stockQty < line.qty) {
+        throw new Error(
+          `STOCK:${line.productId}:${product.stockQty}:${product.name}`,
+        );
+      }
+      if (opts.decrementStock) {
+        await tx.marketplaceProduct.update({
+          where: { id: product.id },
+          data: { stockQty: { decrement: line.qty } },
+        });
+      }
+      currencies.add(product.currency.toUpperCase());
+      const listUnitPriceCents = product.priceCents;
+      const discountPercent = clampDiscountPercent(product.discountPercent);
+      const promoDiscountPercent = clampDiscountPercent(
+        product.promoDiscountPercent,
+      );
+      const unitPriceCents = effectiveUnitPriceCents({
+        priceCents: listUnitPriceCents,
+        discountPercent,
+        promoDiscountPercent,
+      });
+      listSubtotalCents += listUnitPriceCents * line.qty;
+      subtotalCents += unitPriceCents * line.qty;
+      resolved.push({
+        productId: product.id,
+        name: product.name,
+        sku: product.sku,
+        listUnitPriceCents,
+        discountPercent,
+        promoDiscountPercent,
+        unitPriceCents,
+        qty: line.qty,
+        imageUrl: product.images[0]?.url ?? null,
+      });
+    }
+
+    if (currencies.size > 1) {
+      throw new Error('MIXED_CURRENCY');
+    }
+
+    return {
+      resolved,
+      subtotalCents,
+      listSubtotalCents,
+      orderCurrency: [...currencies][0] ?? 'USD',
+    };
+  }
+
+  /** Atomic stock decrement + order create inside a transaction (email checkout). */
   async placeOrder(args: {
     orderNumber: string;
     customerName: string;
@@ -146,73 +233,12 @@ export class MarketplaceRepository {
     }>;
   }) {
     return this.prisma.$transaction(async (tx) => {
-      let subtotalCents = 0;
-      let listSubtotalCents = 0;
-      const resolved: Array<{
-        productId: string;
-        name: string;
-        sku: string;
-        listUnitPriceCents: number;
-        discountPercent: number;
-        promoDiscountPercent: number;
-        unitPriceCents: number;
-        qty: number;
-        imageUrl?: string | null;
-      }> = [];
-      const currencies = new Set<string>();
-
-      for (const line of args.lines) {
-        const product = await tx.marketplaceProduct.findUnique({
-          where: { id: line.productId },
-          include: {
-            images: {
-              orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
-              take: 1,
-            },
-          },
-        });
-        if (!product || !product.published) {
-          throw new Error(`UNAVAILABLE:${line.productId}`);
-        }
-        if (product.stockQty < line.qty) {
-          throw new Error(
-            `STOCK:${line.productId}:${product.stockQty}:${product.name}`,
-          );
-        }
-        await tx.marketplaceProduct.update({
-          where: { id: product.id },
-          data: { stockQty: { decrement: line.qty } },
-        });
-        currencies.add(product.currency.toUpperCase());
-        const listUnitPriceCents = product.priceCents;
-        const discountPercent = clampDiscountPercent(product.discountPercent);
-        const promoDiscountPercent = clampDiscountPercent(
-          product.promoDiscountPercent,
+      const { resolved, subtotalCents, listSubtotalCents, orderCurrency } =
+        await this.resolveLines(
+          tx,
+          args.lines.map((l) => ({ productId: l.productId, qty: l.qty })),
+          { decrementStock: true },
         );
-        const unitPriceCents = effectiveUnitPriceCents({
-          priceCents: listUnitPriceCents,
-          discountPercent,
-          promoDiscountPercent,
-        });
-        listSubtotalCents += listUnitPriceCents * line.qty;
-        subtotalCents += unitPriceCents * line.qty;
-        resolved.push({
-          productId: product.id,
-          name: product.name,
-          sku: product.sku,
-          listUnitPriceCents,
-          discountPercent,
-          promoDiscountPercent,
-          unitPriceCents,
-          qty: line.qty,
-          imageUrl: product.images[0]?.url ?? null,
-        });
-      }
-
-      if (currencies.size > 1) {
-        throw new Error('MIXED_CURRENCY');
-      }
-      const orderCurrency = [...currencies][0] ?? args.currency ?? 'USD';
 
       return tx.marketplaceOrder.create({
         data: {
@@ -226,6 +252,7 @@ export class MarketplaceRepository {
           listSubtotalCents,
           discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
           currency: orderCurrency,
+          paymentMethod: MarketplacePaymentMethod.EMAIL,
           status: MarketplaceOrderStatus.PENDING,
           items: {
             create: resolved.map((r) => ({
@@ -243,6 +270,109 @@ export class MarketplaceRepository {
         },
         include: { items: true },
       });
+    });
+  }
+
+  /** Create PayPal intent order without decrementing stock. */
+  async createPendingPayPalOrder(args: {
+    orderNumber: string;
+    customerName: string;
+    customerEmail: string;
+    customerPhone?: string;
+    customerAddress?: string;
+    notes?: string;
+    currency: string;
+    paypalOrderId?: string;
+    lines: Array<{ productId: string; qty: number }>;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const { resolved, subtotalCents, listSubtotalCents, orderCurrency } =
+        await this.resolveLines(tx, args.lines, { decrementStock: false });
+
+      return tx.marketplaceOrder.create({
+        data: {
+          orderNumber: args.orderNumber,
+          customerName: args.customerName,
+          customerEmail: args.customerEmail,
+          customerPhone: args.customerPhone,
+          customerAddress: args.customerAddress,
+          notes: args.notes,
+          subtotalCents,
+          listSubtotalCents,
+          discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          currency: orderCurrency,
+          paymentMethod: MarketplacePaymentMethod.PAYPAL,
+          status: MarketplaceOrderStatus.AWAITING_PAYMENT,
+          paypalOrderId: args.paypalOrderId,
+          items: {
+            create: resolved.map((r) => ({
+              productId: r.productId,
+              name: r.name,
+              sku: r.sku,
+              listUnitPriceCents: r.listUnitPriceCents,
+              discountPercent: r.discountPercent,
+              promoDiscountPercent: r.promoDiscountPercent,
+              unitPriceCents: r.unitPriceCents,
+              qty: r.qty,
+              imageUrl: r.imageUrl,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+    });
+  }
+
+  /** Decrement stock for an awaiting PayPal order (idempotent if already past AWAITING). */
+  async decrementStockForOrder(orderId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.marketplaceOrder.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+      if (!order) throw new Error('ORDER_NOT_FOUND');
+      if (order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+        return order;
+      }
+
+      for (const item of order.items) {
+        if (!item.productId) continue;
+        const product = await tx.marketplaceProduct.findUnique({
+          where: { id: item.productId },
+        });
+        if (!product || !product.published) {
+          throw new Error(`UNAVAILABLE:${item.productId}`);
+        }
+        if (product.stockQty < item.qty) {
+          throw new Error(
+            `STOCK:${item.productId}:${product.stockQty}:${product.name}`,
+          );
+        }
+        await tx.marketplaceProduct.update({
+          where: { id: product.id },
+          data: { stockQty: { decrement: item.qty } },
+        });
+      }
+
+      return tx.marketplaceOrder.findUnique({
+        where: { id: orderId },
+        include: { items: true },
+      });
+    });
+  }
+
+  findOrderByPaypalOrderId(paypalOrderId: string) {
+    return this.prisma.marketplaceOrder.findUnique({
+      where: { paypalOrderId },
+      include: { items: true },
+    });
+  }
+
+  async cancelAwaitingPayment(orderId: string) {
+    return this.prisma.marketplaceOrder.update({
+      where: { id: orderId },
+      data: { status: MarketplaceOrderStatus.CANCELLED },
+      include: { items: true },
     });
   }
 

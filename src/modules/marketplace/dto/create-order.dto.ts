@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsEmail,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -13,6 +14,11 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+export enum OrderPaymentMethodDto {
+  EMAIL = 'EMAIL',
+  PAYPAL = 'PAYPAL',
+}
 
 export class CreateOrderItemDto {
   @ApiProperty({ description: 'Marketplace product id (UUID or stable string id)' })
@@ -56,12 +62,32 @@ export class CreateMarketplaceOrderDto {
   @MaxLength(1000)
   notes?: string;
 
+  @ApiPropertyOptional({
+    enum: OrderPaymentMethodDto,
+    default: OrderPaymentMethodDto.EMAIL,
+  })
+  @IsOptional()
+  @IsEnum(OrderPaymentMethodDto)
+  paymentMethod?: OrderPaymentMethodDto;
+
   @ApiProperty({ type: [CreateOrderItemDto] })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
+}
+
+export class CapturePayPalOrderDto {
+  @ApiProperty({ description: 'PayPal order id (token from return URL)' })
+  @IsString()
+  @IsNotEmpty()
+  paypalOrderId: string;
+
+  @ApiPropertyOptional({ description: 'Mock HMAC signature (mock mode only)' })
+  @IsOptional()
+  @IsString()
+  sig?: string;
 }
 
 export class MarketplaceOrderQueryDto {
@@ -79,7 +105,16 @@ export class MarketplaceOrderQueryDto {
   @Min(1)
   limit?: number;
 
-  @ApiPropertyOptional({ enum: ['PENDING', 'EMAILED', 'CANCELLED'] })
+  @ApiPropertyOptional({
+    enum: [
+      'PENDING',
+      'EMAILED',
+      'CANCELLED',
+      'AWAITING_PAYMENT',
+      'PAID',
+      'PAYMENT_FAILED',
+    ],
+  })
   @IsOptional()
   @IsString()
   status?: string;

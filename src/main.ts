@@ -52,7 +52,9 @@ function corsOriginOption(): boolean | CorsOriginCallback {
 async function bootstrap() {
   assertProductionEnv();
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
 
   const apiPrefix = process.env.API_PREFIX ?? 'api';
   const apiVersion = process.env.API_VERSION ?? 'v0';

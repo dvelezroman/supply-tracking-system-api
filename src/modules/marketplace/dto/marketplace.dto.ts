@@ -227,6 +227,13 @@ export class UpdateMarketplaceSettingsDto {
   @IsBoolean()
   storeEnabled?: boolean;
 
+  @ApiPropertyOptional({
+    description: 'Enable PayPal (or mock) option on store checkout',
+  })
+  @IsOptional()
+  @IsBoolean()
+  onlinePaymentsEnabled?: boolean;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -162,6 +162,14 @@ enum MarketplaceOrderStatus {
   PENDING
   EMAILED
   CANCELLED
+  AWAITING_PAYMENT
+  PAID
+  PAYMENT_FAILED
+}
+
+enum MarketplacePaymentMethod {
+  EMAIL
+  PAYPAL
 }
 
 /// Commercial store listing (separate from supply-chain Product catalogue).
@@ -217,6 +225,7 @@ model MarketplaceOrder {
   id             String                 @id @default(uuid())
   orderNumber    String                 @unique
   status         MarketplaceOrderStatus @default(PENDING)
+  paymentMethod  MarketplacePaymentMethod @default(EMAIL)
   customerName   String
   customerEmail  String
   customerPhone  String?
@@ -230,6 +239,10 @@ model MarketplaceOrder {
   currency       String                 @default("USD")
   /// Set when email send failed (SMTP missing or transport error).
   emailError     String?
+  paypalOrderId  String?                @unique
+  paypalCaptureId String?
+  paidAt         DateTime?
+  paymentError   String?
 
   items MarketplaceOrderItem[]
 
@@ -270,10 +283,21 @@ model MarketplaceSettings {
   orderNotificationEmail String?
   storeEnabled           Boolean @default(true)
   fromName               String?
+  /// When true, checkout offers PayPal (mock in non-prod without keys, or live with keys).
+  onlinePaymentsEnabled  Boolean @default(false)
 
   updatedAt DateTime @updatedAt
 
   @@map("marketplace_settings")
+}
+
+/// Idempotency ledger for PayPal webhook event ids.
+model PaypalWebhookEvent {
+  id          String   @id
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@map("paypal_webhook_events")
 }
 
 /// A production batch (lote). One Product can have many Lots.
