@@ -21,12 +21,30 @@ const BROWSER_PROBE_PATHS = new Set([
 /** This API is REST-only (`/api/v0/*`). tRPC clients hitting `/api/trpc/*` are misconfigured probes. */
 const TRPC_PROBE_PREFIX = '/api/trpc';
 
+/** Meta/Facebook webhooks POST `/?page_id=…` when callback URL points at the API host root. */
+function isMetaWebhookMisconfigProbe(
+  method: string,
+  path: string,
+  query: Request['query'],
+): boolean {
+  if (method !== 'POST' || path !== '/') return false;
+  const pageId = query.page_id;
+  if (pageId === undefined) return false;
+  if (Array.isArray(pageId)) return pageId.length > 0;
+  return String(pageId).length > 0;
+}
+
 function isNoRouteProbe404(
   status: number,
   method: string,
   path: string,
+  query: Request['query'],
 ): boolean {
-  if (status !== HttpStatus.NOT_FOUND || method !== 'GET') return false;
+  if (status !== HttpStatus.NOT_FOUND) return false;
+
+  if (isMetaWebhookMisconfigProbe(method, path, query)) return true;
+
+  if (method !== 'GET') return false;
   if (BROWSER_PROBE_PATHS.has(path)) return true;
   return (
     path === TRPC_PROBE_PREFIX || path.startsWith(`${TRPC_PROBE_PREFIX}/`)
@@ -56,6 +74,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       status,
       request.method,
       request.path,
+      request.query,
     );
 
     if (probe404) {
