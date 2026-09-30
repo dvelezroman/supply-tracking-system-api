@@ -48,9 +48,9 @@ export class CreateMarketplaceOrderDto {
   customerEmail: string;
 
   @ApiPropertyOptional({
-    example: '0999999999',
+    example: '+593995710556',
     description:
-      'Required for EMAIL / BANK_TRANSFER (WhatsApp confirmation). Recommended for PayPal.',
+      'Ecuador WhatsApp E.164 (+593 + 9 digits starting with 9, no trunk 0). Required for EMAIL / BANK_TRANSFER.',
   })
   @ValidateIf(
     (o: CreateMarketplaceOrderDto) =>
