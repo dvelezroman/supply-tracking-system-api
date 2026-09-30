@@ -76,4 +76,20 @@ export default () => ({
       process.env.PAYPAL_FORCE_MOCK === 'true' ||
       process.env.PAYPAL_FORCE_MOCK === '1',
   },
+  /** WhatsApp via Notificador Bitflow (WhatChimp). WhatsappService also reads process.env. */
+  notificador: {
+    enabled: process.env.NOTIFICADOR_ENABLED === 'true',
+    baseUrl: process.env.NOTIFICADOR_BASE_URL?.trim() || '',
+    apiKey: process.env.NOTIFICADOR_API_KEY?.trim() || '',
+    templateDefault: process.env.NOTIFICADOR_TEMPLATE_DEFAULT?.trim() || '',
+    templatePaymentApproved:
+      process.env.NOTIFICADOR_TEMPLATE_PAYMENT_APPROVED?.trim() || '',
+    sendPath:
+      process.env.NOTIFICADOR_WHATSAPP_SEND_PATH?.trim() ||
+      'whatchimp/messages/send-template-message',
+    timeoutMs: parseInt(process.env.NOTIFICADOR_TIMEOUT_MS ?? '15000', 10) || 15000,
+    phoneFormat: (process.env.NOTIFICADOR_PHONE_FORMAT?.trim() || 'plus') as
+      | 'plus'
+      | 'digits',
+  },
 });

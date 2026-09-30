@@ -43,6 +43,8 @@ import {
 } from './dto/marketplace.dto';
 import { clampDiscountPercent } from './marketplace-pricing.util';
 import { MarketplaceRepository } from './marketplace.repository';
+import { WhatsappNotificationsService } from '../whatsapp/whatsapp-notifications.service';
+import { normalizePhoneE164 } from '../../common/phone.util';
 
 @Injectable()
 export class MarketplaceService implements OnModuleInit {
@@ -56,6 +58,7 @@ export class MarketplaceService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly paypal: PaypalService,
     private readonly paypalWebhooks: PaypalWebhookService,
+    private readonly whatsapp: WhatsappNotificationsService,
   ) {}
 
   onModuleInit(): void {
@@ -488,6 +491,14 @@ export class MarketplaceService implements OnModuleInit {
       }
     }
 
+    const phoneRaw = dto.customerPhone?.trim();
+    const phone = normalizePhoneE164(phoneRaw);
+    if (!phone) {
+      throw new BadRequestException(
+        'A valid customer phone is required for offline payment methods',
+      );
+    }
+
     const paymentMethod =
       method === OrderPaymentMethodDto.BANK_TRANSFER
         ? MarketplacePaymentMethod.BANK_TRANSFER
@@ -501,11 +512,12 @@ export class MarketplaceService implements OnModuleInit {
         orderNumber,
         customerName: dto.customerName.trim(),
         customerEmail: dto.customerEmail.trim().toLowerCase(),
-        customerPhone: dto.customerPhone?.trim(),
+        customerPhone: phone,
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
         currency: 'USD',
         paymentMethod,
+        notifyWhatsapp: dto.notifyWhatsapp !== false,
         lines: mergedLines,
       });
     } catch (err) {
@@ -534,6 +546,8 @@ export class MarketplaceService implements OnModuleInit {
       throw new BadRequestException('Online payments are not available');
     }
 
+    const phone = normalizePhoneE164(dto.customerPhone?.trim()) ?? null;
+
     const mergedLines = this.mergeOrderLines(dto.items);
     const orderNumber = this.generateOrderNumber();
     let order;
@@ -542,10 +556,11 @@ export class MarketplaceService implements OnModuleInit {
         orderNumber,
         customerName: dto.customerName.trim(),
         customerEmail: dto.customerEmail.trim().toLowerCase(),
-        customerPhone: dto.customerPhone?.trim(),
+        customerPhone: phone ?? undefined,
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
         currency: 'USD',
+        notifyWhatsapp: dto.notifyWhatsapp !== false,
         lines: mergedLines,
       });
     } catch (err) {
@@ -568,6 +583,13 @@ export class MarketplaceService implements OnModuleInit {
       });
       const updated = await this.repo.updateOrder(order.id, {
         paypalOrderId: created.paypalOrderId,
+      });
+      const confirmationUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`;
+      await this.notifyOrderWhatsapp({
+        order: updated,
+        settings,
+        phase: 'awaiting',
+        confirmationUrl,
       });
       return {
         ...updated,
@@ -736,6 +758,7 @@ export class MarketplaceService implements OnModuleInit {
       discountTotalCents: number;
       currency: string;
       paymentMethod?: MarketplacePaymentMethod | string;
+      notifyWhatsapp?: boolean;
       items: Array<{
         name: string;
         sku: string;
@@ -767,9 +790,18 @@ export class MarketplaceService implements OnModuleInit {
       '';
 
     if (!to) {
-      return this.repo.updateOrder(order.id, {
+      const updated = await this.repo.updateOrder(order.id, {
         emailError: 'No order notification email configured',
       });
+      await this.notifyOrderWhatsapp({
+        order: { ...order, ...updated },
+        settings,
+        phase: paymentConfirmed ? 'paid' : 'awaiting',
+        confirmationUrl: `${(
+          this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
+        ).replace(/\/$/, '')}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`,
+      });
+      return updated;
     }
 
     const bankTransfer =
@@ -827,10 +859,19 @@ export class MarketplaceService implements OnModuleInit {
         );
       }
 
-      return this.repo.updateOrder(order.id, {
+      const updated = await this.repo.updateOrder(order.id, {
         status: successStatus,
         emailError: customerEmailError,
       });
+
+      await this.notifyOrderWhatsapp({
+        order: updated,
+        settings,
+        phase: paymentConfirmed ? 'paid' : 'awaiting',
+        confirmationUrl: orderConfirmationUrl,
+      });
+
+      return updated;
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Email send failed';
       this.logger.error(`Order email failed for ${order.orderNumber}: ${reason}`);
@@ -838,6 +879,64 @@ export class MarketplaceService implements OnModuleInit {
         status: emailFailureStatus,
         emailError: reason,
       });
+    }
+  }
+
+  private async notifyOrderWhatsapp(args: {
+    order: {
+      id: string;
+      orderNumber: string;
+      customerName: string;
+      customerPhone: string | null;
+      subtotalCents: number;
+      currency: string;
+      paymentMethod?: MarketplacePaymentMethod | string;
+      notifyWhatsapp?: boolean;
+    };
+    settings: {
+      bankTransferEnabled: boolean;
+      bankName: string | null;
+      bankAccountType: string | null;
+      bankAccountNumber: string | null;
+      bankBeneficiaryName: string | null;
+      bankBeneficiaryRuc: string | null;
+      bankContactEmail: string | null;
+    };
+    phase: 'awaiting' | 'paid';
+    confirmationUrl?: string;
+  }): Promise<void> {
+    const notifyInput = {
+      id: args.order.id,
+      orderNumber: args.order.orderNumber,
+      customerName: args.order.customerName,
+      customerPhone: args.order.customerPhone,
+      subtotalCents: args.order.subtotalCents,
+      currency: args.order.currency,
+      paymentMethod: args.order.paymentMethod ?? MarketplacePaymentMethod.EMAIL,
+      notifyWhatsapp: args.order.notifyWhatsapp !== false,
+    };
+
+    try {
+      if (args.phase === 'awaiting') {
+        await this.whatsapp.notifyMarketplacePendingAdmins(notifyInput);
+        const bankTransfer =
+          args.order.paymentMethod === MarketplacePaymentMethod.BANK_TRANSFER
+            ? this.bankTransferDetailsFromSettings(args.settings)
+            : null;
+        await this.whatsapp.notifyCustomerOrderReceived(notifyInput, {
+          bankTransfer,
+          confirmationUrl: args.confirmationUrl,
+        });
+        return;
+      }
+
+      await this.whatsapp.notifyCustomerPaymentApproved(notifyInput);
+    } catch (err) {
+      this.logger.error(
+        `WhatsApp notify failed for ${args.order.orderNumber}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 

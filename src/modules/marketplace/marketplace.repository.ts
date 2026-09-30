@@ -283,6 +283,7 @@ export class MarketplaceRepository {
     notes?: string;
     currency: string;
     paypalOrderId?: string;
+    notifyWhatsapp?: boolean;
     lines: Array<{ productId: string; qty: number }>;
   }) {
     return this.prisma.$transaction(async (tx) => {
@@ -304,6 +305,7 @@ export class MarketplaceRepository {
           paymentMethod: MarketplacePaymentMethod.PAYPAL,
           status: MarketplaceOrderStatus.AWAITING_PAYMENT,
           paypalOrderId: args.paypalOrderId,
+          notifyWhatsapp: args.notifyWhatsapp ?? true,
           items: {
             create: resolved.map((r) => ({
               productId: r.productId,
@@ -332,6 +334,7 @@ export class MarketplaceRepository {
     customerAddress?: string;
     notes?: string;
     currency: string;
+    notifyWhatsapp?: boolean;
     paymentMethod:
       | typeof MarketplacePaymentMethod.EMAIL
       | typeof MarketplacePaymentMethod.BANK_TRANSFER;
@@ -355,6 +358,7 @@ export class MarketplaceRepository {
           currency: orderCurrency,
           paymentMethod: args.paymentMethod,
           status: MarketplaceOrderStatus.AWAITING_PAYMENT,
+          notifyWhatsapp: args.notifyWhatsapp ?? true,
           items: {
             create: resolved.map((r) => ({
               productId: r.productId,

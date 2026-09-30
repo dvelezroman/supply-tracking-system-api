@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { Prisma, UserRole } from '@prisma/client';
+import { normalizePhoneE164 } from '../../common/phone.util';
 import { UsersRepository } from './users.repository';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -43,15 +44,26 @@ export class UsersService {
     return this.sanitize(user);
   }
 
+  private normalizePhoneOrThrow(raw?: string | null): string | null {
+    if (raw == null || raw.trim() === '') return null;
+    const phone = normalizePhoneE164(raw);
+    if (!phone) {
+      throw new BadRequestException('Invalid phone number');
+    }
+    return phone;
+  }
+
   async createUser(dto: CreateUserDto): Promise<SafeUser> {
     const existing = await this.findByEmail(dto.email);
     if (existing) throw new ConflictException('Email already in use');
 
+    const phone = this.normalizePhoneOrThrow(dto.phone);
     const hashed = await bcrypt.hash(dto.password, 10);
     const user = await this.usersRepository.create({
       email: dto.email,
       name: dto.name,
       password: hashed,
+      phone,
       role: dto.role ?? 'VIEWER',
       ...(dto.actorId
         ? { actor: { connect: { id: dto.actorId } } }
@@ -74,6 +86,9 @@ export class UsersService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.role !== undefined) data.role = dto.role;
+    if (dto.phone !== undefined) {
+      data.phone = this.normalizePhoneOrThrow(dto.phone);
+    }
 
     if (dto.password && dto.password.length > 0) {
       data.password = await bcrypt.hash(dto.password, 10);

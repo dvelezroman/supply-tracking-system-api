@@ -77,11 +77,15 @@ model User {
   email     String   @unique
   password  String
   name      String
+  /// E.164 phone for WhatsApp admin alerts (optional).
+  phone     String?
   role      UserRole @default(VIEWER)
   actorId   String?
   actor     Actor?   @relation(fields: [actorId], references: [id])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  whatsappNotificationLogs WhatsappNotificationLog[]
 
   @@map("users")
 }
@@ -244,8 +248,11 @@ model MarketplaceOrder {
   paypalCaptureId String?
   paidAt         DateTime?
   paymentError   String?
+  /// When false, skip customer WhatsApp for this order (opt-out).
+  notifyWhatsapp Boolean                @default(true)
 
   items MarketplaceOrderItem[]
+  whatsappNotificationLogs WhatsappNotificationLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -307,6 +314,46 @@ model PaypalWebhookEvent {
   processedAt DateTime @default(now())
 
   @@map("paypal_webhook_events")
+}
+
+enum WhatsappNotificationSource {
+  AUTO
+  STAFF
+}
+
+/// Prevents duplicate WhatsApp auto-sends for the same occasion/recipient.
+model WhatsappNotificationDedup {
+  id           String   @id @default(uuid())
+  occasionKey  String   @db.VarChar(160)
+  recipientKey String   @db.VarChar(100)
+  sentAt       DateTime @default(now())
+
+  @@unique([occasionKey, recipientKey])
+  @@index([sentAt])
+  @@index([occasionKey])
+  @@map("whatsapp_notification_dedup")
+}
+
+/// Append-only ledger of successful WhatsApp deliveries.
+model WhatsappNotificationLog {
+  id                 String                     @id @default(uuid())
+  occasionKey        String                     @db.VarChar(160)
+  recipientKey       String                     @db.VarChar(100)
+  recipientLabel     String?                    @db.VarChar(120)
+  occasion           String                     @db.VarChar(40)
+  source             WhatsappNotificationSource @default(AUTO)
+  actorUserId        String?
+  marketplaceOrderId String?
+  sentAt             DateTime                   @default(now())
+
+  actor            User?             @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  marketplaceOrder MarketplaceOrder? @relation(fields: [marketplaceOrderId], references: [id], onDelete: SetNull)
+
+  @@index([sentAt])
+  @@index([occasion])
+  @@index([marketplaceOrderId])
+  @@index([occasionKey, recipientKey])
+  @@map("whatsapp_notification_logs")
 }
 
 /// A production batch (lote). One Product can have many Lots.

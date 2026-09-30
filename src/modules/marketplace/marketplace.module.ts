@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MailModule } from '../mail/mail.module';
 import { PaypalModule } from '../paypal/paypal.module';
 import { StorageModule } from '../storage/storage.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import {
   MarketplaceOrdersAdminController,
   MarketplaceOrdersPublicController,
@@ -14,7 +15,7 @@ import { MarketplaceRepository } from './marketplace.repository';
 import { MarketplaceService } from './marketplace.service';
 
 @Module({
-  imports: [StorageModule, MailModule, PaypalModule],
+  imports: [StorageModule, MailModule, PaypalModule, WhatsappModule],
   controllers: [
     MarketplacePublicController,
     MarketplaceAdminController,

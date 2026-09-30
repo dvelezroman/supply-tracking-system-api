@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -27,6 +28,16 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @ApiPropertyOptional({
+    example: '0999999999',
+    description: 'Phone for WhatsApp admin alerts; empty/null clears',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsString()
+  @MaxLength(40)
+  phone?: string | null;
 
   @ApiPropertyOptional({ enum: UserRole })
   @IsOptional()

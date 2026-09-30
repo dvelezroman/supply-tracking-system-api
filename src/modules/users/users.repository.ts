@@ -27,6 +27,7 @@ export class UsersRepository {
         id: true,
         email: true,
         name: true,
+        phone: true,
         role: true,
         actorId: true,
         createdAt: true,

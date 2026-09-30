@@ -98,6 +98,27 @@ export function buildBankTransferInstructionsText(
   return lines.join('\n');
 }
 
+/**
+ * One-line bank summary for WhatsApp WhatChimp params (caller truncates).
+ */
+export function buildBankTransferWhatsappSummaryLine(
+  payload: Pick<
+    OrderEmailBase,
+    'orderNumber' | 'subtotalCents' | 'currency' | 'paymentMethod' | 'bankTransfer'
+  >,
+): string {
+  if (payload.paymentMethod !== 'BANK_TRANSFER' || !payload.bankTransfer) {
+    return '';
+  }
+  const b = payload.bankTransfer;
+  return [
+    b.bankName,
+    `Cta ${b.bankAccountNumber}`,
+    formatMoney(payload.subtotalCents, payload.currency),
+    `Ref ${payload.orderNumber}`,
+  ].join(' · ');
+}
+
 export function formatMoney(cents: number, currency: string): string {
   return new Intl.NumberFormat('es-EC', {
     style: 'currency',

@@ -55,6 +55,25 @@ OPENAI_EMBED_MODEL=text-embedding-3-small
 
 Opcionales: SMTP, S3, branding (`LABEL_*`), etc. Ver `.env.example`.
 
+### WhatsApp (Notificador Bitflow)
+
+Avisos de pedidos marketplace (admin pendiente de pago + cliente recibida / pago aprobado). Misma integración que ruta593:
+
+```bash
+NOTIFICADOR_ENABLED=true
+NOTIFICADOR_BASE_URL=https://ws-api.bitflow.bid/api/v1
+NOTIFICADOR_API_KEY=...
+NOTIFICADOR_TEMPLATE_DEFAULT=...   # plantilla WhatChimp con contact, contentMessage, contentMessageExt
+# NOTIFICADOR_TEMPLATE_PAYMENT_APPROVED=...  # opcional
+NOTIFICADOR_PHONE_FORMAT=plus
+```
+
+Requisitos operativos:
+
+- Usuarios `ADMIN` con `phone` en E.164 (o móvil Ecuador `09…`) para recibir alertas.
+- Checkout offline / transferencia exige `customerPhone` del comprador.
+- Sin `NOTIFICADOR_ENABLED=true` o sin credenciales, los pedidos siguen normales (WhatsApp se omite).
+
 ### S3 — fotos del marketplace
 
 Misma convención que ruta593: el nombre del bucket de AWS **no puede incluir `/`**. Usa:

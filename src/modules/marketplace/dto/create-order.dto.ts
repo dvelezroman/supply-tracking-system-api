@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsInt,
@@ -12,6 +13,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -45,9 +47,18 @@ export class CreateMarketplaceOrderDto {
   @IsEmail()
   customerEmail: string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiPropertyOptional({
+    example: '0999999999',
+    description:
+      'Required for EMAIL / BANK_TRANSFER (WhatsApp confirmation). Recommended for PayPal.',
+  })
+  @ValidateIf(
+    (o: CreateMarketplaceOrderDto) =>
+      (o.paymentMethod ?? OrderPaymentMethodDto.EMAIL) !==
+      OrderPaymentMethodDto.PAYPAL,
+  )
   @IsString()
+  @IsNotEmpty({ message: 'customerPhone is required for offline payment methods' })
   @MaxLength(40)
   customerPhone?: string;
 
@@ -70,6 +81,14 @@ export class CreateMarketplaceOrderDto {
   @IsOptional()
   @IsEnum(OrderPaymentMethodDto)
   paymentMethod?: OrderPaymentMethodDto;
+
+  @ApiPropertyOptional({
+    default: true,
+    description: 'When false, skip customer WhatsApp notifications for this order',
+  })
+  @IsOptional()
+  @IsBoolean()
+  notifyWhatsapp?: boolean;
 
   @ApiProperty({ type: [CreateOrderItemDto] })
   @IsArray()

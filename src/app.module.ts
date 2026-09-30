@@ -15,6 +15,7 @@ import { HealthModule } from './modules/health/health.module';
 import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 import { PaypalModule } from './modules/paypal/paypal.module';
 import { RecipesModule } from './modules/recipes/recipes.module';
+import { WhatsappModule } from './modules/whatsapp/whatsapp.module';
 import { RolesGuard } from './common/guards/roles.guard';
 
 @Module({
@@ -36,6 +37,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     PaypalModule,
     MarketplaceModule,
     RecipesModule,
+    WhatsappModule,
     HealthModule,
   ],
   providers: [RolesGuard],
