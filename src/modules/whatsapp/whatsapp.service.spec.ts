@@ -45,10 +45,12 @@ describe('buildBankTransferWhatsappSummary', () => {
         bankBeneficiaryRuc: '1799999999001',
       },
     });
-    expect(summary).toContain('Pichincha');
+    expect(summary).toContain('Banco: Pichincha');
+    expect(summary).toContain('Beneficiario: Marea Alta');
+    expect(summary).toContain('RUC: 1799999999001');
     expect(summary).toContain('1234567890');
-    expect(summary).toContain('MA-12345678');
-    expect(summary.length).toBeLessThanOrEqual(120);
+    expect(summary).toContain('Referencia: MA-12345678');
+    expect(summary.length).toBeLessThanOrEqual(1024);
   });
 });
 

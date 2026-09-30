@@ -1,3 +1,5 @@
+import { joinWhatchimpMessageLines } from '../whatsapp/whatchimp-template-text.util';
+
 export type OrderEmailLine = {
   name: string;
   sku: string;
@@ -80,15 +82,11 @@ export function buildBankTransferInstructionsHtml(
   </table>`;
 }
 
-export function buildBankTransferInstructionsText(
-  payload: OrderEmailBase,
-): string {
-  if (payload.paymentMethod !== 'BANK_TRANSFER' || !payload.bankTransfer) {
-    return '';
-  }
-  const b = payload.bankTransfer;
+function buildBankTransferDetailLines(
+  payload: Pick<OrderEmailBase, 'orderNumber' | 'subtotalCents' | 'currency'>,
+  b: BankTransferEmailDetails,
+): string[] {
   const lines = [
-    '--- Transferencia bancaria ---',
     `Banco: ${b.bankName}`,
     `Tipo: ${b.bankAccountType}`,
     `Cuenta: ${b.bankAccountNumber}`,
@@ -100,11 +98,23 @@ export function buildBankTransferInstructionsText(
   if (b.bankContactEmail) {
     lines.push(`Comprobante a: ${b.bankContactEmail}`);
   }
-  return lines.join('\n');
+  return lines;
+}
+
+export function buildBankTransferInstructionsText(
+  payload: OrderEmailBase,
+): string {
+  if (payload.paymentMethod !== 'BANK_TRANSFER' || !payload.bankTransfer) {
+    return '';
+  }
+  return [
+    '--- Transferencia bancaria ---',
+    ...buildBankTransferDetailLines(payload, payload.bankTransfer),
+  ].join('\n');
 }
 
 /**
- * One-line bank summary for WhatsApp WhatChimp params (caller truncates).
+ * Bank transfer details for WhatsApp WhatChimp params (single line, no newlines).
  */
 export function buildBankTransferWhatsappSummaryLine(
   payload: Pick<
@@ -115,13 +125,9 @@ export function buildBankTransferWhatsappSummaryLine(
   if (payload.paymentMethod !== 'BANK_TRANSFER' || !payload.bankTransfer) {
     return '';
   }
-  const b = payload.bankTransfer;
-  return [
-    b.bankName,
-    `Cta ${b.bankAccountNumber}`,
-    formatMoney(payload.subtotalCents, payload.currency),
-    `Ref ${payload.orderNumber}`,
-  ].join(' · ');
+  return joinWhatchimpMessageLines(
+    buildBankTransferDetailLines(payload, payload.bankTransfer),
+  );
 }
 
 export function formatMoney(cents: number, currency: string): string {

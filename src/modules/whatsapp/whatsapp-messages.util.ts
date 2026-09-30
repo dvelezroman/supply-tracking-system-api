@@ -7,6 +7,8 @@ import { truncateTemplateParam } from './whatchimp-template-text.util';
 
 export const WHATSAPP_CONTENT_MESSAGE_MAX_LENGTH = 80;
 export const WHATSAPP_CONTENT_MESSAGE_EXT_MAX_LENGTH = 120;
+/** Bank transfer details mirror email; need more room than generic ext copy. */
+export const WHATSAPP_BANK_TRANSFER_SUMMARY_MAX_LENGTH = 1024;
 
 export type WhatsappTemplateCopy = {
   contact: string;
@@ -37,7 +39,7 @@ function paymentMethodLabel(method?: string | null): string {
   }
 }
 
-/** Compact bank summary for WhatChimp contentMessageExt (≤120 chars). */
+/** Bank transfer summary for WhatChimp contentMessageExt (same fields as order email). */
 export function buildBankTransferWhatsappSummary(args: {
   orderNumber: string;
   subtotalCents: number;
@@ -53,7 +55,7 @@ export function buildBankTransferWhatsappSummary(args: {
       paymentMethod: args.paymentMethod ?? undefined,
       bankTransfer: args.bankTransfer,
     }),
-    WHATSAPP_CONTENT_MESSAGE_EXT_MAX_LENGTH,
+    WHATSAPP_BANK_TRANSFER_SUMMARY_MAX_LENGTH,
   );
 }
 
