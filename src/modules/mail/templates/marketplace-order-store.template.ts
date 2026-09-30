@@ -1,5 +1,7 @@
 import {
   buildPlainOrderSummary,
+  buildBankTransferInstructionsHtml,
+  buildBankTransferInstructionsText,
   escapeHtml,
   formatMoney,
   type OrderEmailBase,
@@ -62,6 +64,12 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
                   ? `<p style="margin:16px 0 0;font-size:14px;line-height:1.55;color:#334155;"><strong style="color:#0f172a;">Notas:</strong> ${escapeHtml(payload.notes)}</p>`
                   : ''
               }
+              ${
+                payload.paymentMethod
+                  ? `<p style="margin:12px 0 0;font-size:14px;line-height:1.55;color:#334155;"><strong style="color:#0f172a;">Pago:</strong> ${escapeHtml(payload.paymentMethod)}</p>`
+                  : ''
+              }
+              ${buildBankTransferInstructionsHtml(payload)}
               <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:24px 0 10px;">Productos</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
                 <thead>
@@ -95,9 +103,16 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
     bodyHtml,
   });
 
+  const bankText = buildBankTransferInstructionsText(payload);
   return {
     html,
-    text: buildPlainOrderSummary(payload, 'Nuevo pedido (tienda)'),
+    text: [
+      buildPlainOrderSummary(payload, 'Nuevo pedido (tienda)'),
+      payload.paymentMethod ? `Método de pago: ${payload.paymentMethod}` : '',
+      bankText,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
     subject: `[Marea Alta] Pedido ${payload.orderNumber}`,
   };
 }

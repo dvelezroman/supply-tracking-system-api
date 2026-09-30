@@ -170,6 +170,7 @@ enum MarketplaceOrderStatus {
 enum MarketplacePaymentMethod {
   EMAIL
   PAYPAL
+  BANK_TRANSFER
 }
 
 /// Commercial store listing (separate from supply-chain Product catalogue).
@@ -285,6 +286,14 @@ model MarketplaceSettings {
   fromName               String?
   /// When true, checkout offers PayPal (mock in non-prod without keys, or live with keys).
   onlinePaymentsEnabled  Boolean @default(false)
+  /// When true, checkout offers bank transfer with configured account details.
+  bankTransferEnabled    Boolean @default(true)
+  bankName               String?
+  bankAccountType        String?
+  bankAccountNumber      String?
+  bankBeneficiaryName    String?
+  bankBeneficiaryRuc     String?
+  bankContactEmail       String?
 
   updatedAt DateTime @updatedAt
 

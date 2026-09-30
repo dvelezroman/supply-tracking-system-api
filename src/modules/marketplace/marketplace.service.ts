@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   MarketplaceOrderStatus,
+  MarketplacePaymentMethod,
   Prisma,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -371,16 +372,45 @@ export class MarketplaceService implements OnModuleInit {
 
   // ─── Settings ─────────────────────────────────────────────────────────────
 
+  private bankTransferDetailsFromSettings(s: {
+    bankTransferEnabled: boolean;
+    bankName: string | null;
+    bankAccountType: string | null;
+    bankAccountNumber: string | null;
+    bankBeneficiaryName: string | null;
+    bankBeneficiaryRuc: string | null;
+    bankContactEmail: string | null;
+  }) {
+    const complete =
+      !!s.bankName?.trim() &&
+      !!s.bankAccountType?.trim() &&
+      !!s.bankAccountNumber?.trim() &&
+      !!s.bankBeneficiaryName?.trim() &&
+      !!s.bankBeneficiaryRuc?.trim();
+    if (!s.bankTransferEnabled || !complete) return null;
+    return {
+      bankName: s.bankName!.trim(),
+      bankAccountType: s.bankAccountType!.trim(),
+      bankAccountNumber: s.bankAccountNumber!.trim(),
+      bankBeneficiaryName: s.bankBeneficiaryName!.trim(),
+      bankBeneficiaryRuc: s.bankBeneficiaryRuc!.trim(),
+      bankContactEmail: s.bankContactEmail?.trim() || null,
+    };
+  }
+
   async getPublicSettings() {
     const s = await this.repo.getSettings();
     const paypalMode = this.paypal.isCheckoutAvailable(s.onlinePaymentsEnabled)
       ? this.paypal.getProviderMode()
       : 'off';
+    const bankTransfer = this.bankTransferDetailsFromSettings(s);
     return {
       storeEnabled: s.storeEnabled,
       onlinePaymentsEnabled: s.onlinePaymentsEnabled,
       paypalAvailable: this.paypal.isCheckoutAvailable(s.onlinePaymentsEnabled),
       paypalMode,
+      bankTransferEnabled: !!bankTransfer,
+      bankTransfer,
     };
   }
 
@@ -397,6 +427,27 @@ export class MarketplaceService implements OnModuleInit {
     if (dto.onlinePaymentsEnabled !== undefined) {
       data.onlinePaymentsEnabled = dto.onlinePaymentsEnabled;
     }
+    if (dto.bankTransferEnabled !== undefined) {
+      data.bankTransferEnabled = dto.bankTransferEnabled;
+    }
+    if (dto.bankName !== undefined) {
+      data.bankName = dto.bankName?.trim() || null;
+    }
+    if (dto.bankAccountType !== undefined) {
+      data.bankAccountType = dto.bankAccountType?.trim() || null;
+    }
+    if (dto.bankAccountNumber !== undefined) {
+      data.bankAccountNumber = dto.bankAccountNumber?.trim() || null;
+    }
+    if (dto.bankBeneficiaryName !== undefined) {
+      data.bankBeneficiaryName = dto.bankBeneficiaryName?.trim() || null;
+    }
+    if (dto.bankBeneficiaryRuc !== undefined) {
+      data.bankBeneficiaryRuc = dto.bankBeneficiaryRuc?.trim() || null;
+    }
+    if (dto.bankContactEmail !== undefined) {
+      data.bankContactEmail = dto.bankContactEmail?.trim() || null;
+    }
     if (dto.fromName !== undefined) {
       data.fromName = dto.fromName?.trim() || null;
     }
@@ -410,20 +461,43 @@ export class MarketplaceService implements OnModuleInit {
     if (method === OrderPaymentMethodDto.PAYPAL) {
       return this.startPayPalCheckout(dto);
     }
-    return this.placeOrderEmail(dto);
+    if (
+      method === OrderPaymentMethodDto.BANK_TRANSFER ||
+      method === OrderPaymentMethodDto.EMAIL
+    ) {
+      return this.placeOfflineOrder(dto, method);
+    }
+    throw new BadRequestException('Invalid payment method');
   }
 
-  async placeOrderEmail(dto: CreateMarketplaceOrderDto) {
+  async placeOfflineOrder(
+    dto: CreateMarketplaceOrderDto,
+    method:
+      | OrderPaymentMethodDto.EMAIL
+      | OrderPaymentMethodDto.BANK_TRANSFER,
+  ) {
     const settings = await this.repo.getSettings();
     if (!settings.storeEnabled) {
       throw new BadRequestException('Store is currently disabled');
     }
 
+    if (method === OrderPaymentMethodDto.BANK_TRANSFER) {
+      const bank = this.bankTransferDetailsFromSettings(settings);
+      if (!bank) {
+        throw new BadRequestException('Bank transfer is not available');
+      }
+    }
+
+    const paymentMethod =
+      method === OrderPaymentMethodDto.BANK_TRANSFER
+        ? MarketplacePaymentMethod.BANK_TRANSFER
+        : MarketplacePaymentMethod.EMAIL;
+
     const mergedLines = this.mergeOrderLines(dto.items);
     const orderNumber = this.generateOrderNumber();
     let order;
     try {
-      order = await this.repo.placeOrder({
+      order = await this.repo.createAwaitingOfflineOrder({
         orderNumber,
         customerName: dto.customerName.trim(),
         customerEmail: dto.customerEmail.trim().toLowerCase(),
@@ -431,19 +505,24 @@ export class MarketplaceService implements OnModuleInit {
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
         currency: 'USD',
-        lines: mergedLines.map((i) => ({
-          productId: i.productId,
-          name: '',
-          sku: '',
-          unitPriceCents: 0,
-          qty: i.qty,
-        })),
+        paymentMethod,
+        lines: mergedLines,
       });
     } catch (err) {
       this.rethrowOrderPlacementError(err);
     }
 
-    return this.sendOrderEmails(order, settings, MarketplaceOrderStatus.PENDING);
+    return this.sendOrderEmails(
+      order,
+      settings,
+      MarketplaceOrderStatus.AWAITING_PAYMENT,
+      MarketplaceOrderStatus.AWAITING_PAYMENT,
+    );
+  }
+
+  /** @deprecated Prefer placeOfflineOrder — kept for callers that still expect old name. */
+  async placeOrderEmail(dto: CreateMarketplaceOrderDto) {
+    return this.placeOfflineOrder(dto, OrderPaymentMethodDto.EMAIL);
   }
 
   async startPayPalCheckout(dto: CreateMarketplaceOrderDto) {
@@ -590,7 +669,57 @@ export class MarketplaceService implements OnModuleInit {
     });
 
     const settings = await this.repo.getSettings();
-    return this.sendOrderEmails(paid, settings, MarketplaceOrderStatus.PAID);
+    return this.sendOrderEmails(
+      paid,
+      settings,
+      MarketplaceOrderStatus.PAID,
+      MarketplaceOrderStatus.PAID,
+      true,
+    );
+  }
+
+  async confirmOfflinePayment(id: string) {
+    const order = await this.findOrderById(id);
+    if (order.status === MarketplaceOrderStatus.PAID) {
+      throw new BadRequestException('Order is already paid');
+    }
+    if (order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+      throw new BadRequestException('Order is not awaiting payment');
+    }
+    if (
+      order.paymentMethod !== MarketplacePaymentMethod.EMAIL &&
+      order.paymentMethod !== MarketplacePaymentMethod.BANK_TRANSFER
+    ) {
+      throw new BadRequestException(
+        'Only offline payment methods can be confirmed manually',
+      );
+    }
+
+    try {
+      await this.repo.decrementStockForOrder(order.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: msg,
+      });
+      this.rethrowOrderPlacementError(err);
+    }
+
+    const paid = await this.repo.updateOrder(order.id, {
+      status: MarketplaceOrderStatus.PAID,
+      paidAt: new Date(),
+      paymentError: null,
+    });
+
+    const settings = await this.repo.getSettings();
+    return this.sendOrderEmails(
+      paid,
+      settings,
+      MarketplaceOrderStatus.PAID,
+      MarketplaceOrderStatus.PAID,
+      true,
+    );
   }
 
   private async sendOrderEmails(
@@ -606,6 +735,7 @@ export class MarketplaceService implements OnModuleInit {
       listSubtotalCents: number;
       discountTotalCents: number;
       currency: string;
+      paymentMethod?: MarketplacePaymentMethod | string;
       items: Array<{
         name: string;
         sku: string;
@@ -619,8 +749,17 @@ export class MarketplaceService implements OnModuleInit {
     settings: {
       orderNotificationEmail: string | null;
       fromName: string | null;
+      bankTransferEnabled: boolean;
+      bankName: string | null;
+      bankAccountType: string | null;
+      bankAccountNumber: string | null;
+      bankBeneficiaryName: string | null;
+      bankBeneficiaryRuc: string | null;
+      bankContactEmail: string | null;
     },
     emailFailureStatus: MarketplaceOrderStatus = MarketplaceOrderStatus.PENDING,
+    successStatus: MarketplaceOrderStatus = MarketplaceOrderStatus.EMAILED,
+    paymentConfirmed = false,
   ) {
     const to =
       settings.orderNotificationEmail?.trim() ||
@@ -633,6 +772,11 @@ export class MarketplaceService implements OnModuleInit {
       });
     }
 
+    const bankTransfer =
+      order.paymentMethod === MarketplacePaymentMethod.BANK_TRANSFER
+        ? this.bankTransferDetailsFromSettings(settings)
+        : null;
+
     const emailBase = {
       orderNumber: order.orderNumber,
       customerName: order.customerName,
@@ -644,6 +788,9 @@ export class MarketplaceService implements OnModuleInit {
       listSubtotalCents: order.listSubtotalCents,
       discountTotalCents: order.discountTotalCents,
       currency: order.currency,
+      paymentMethod: order.paymentMethod,
+      paymentConfirmed,
+      bankTransfer,
       items: order.items.map((i) => ({
         name: i.name,
         sku: i.sku,
@@ -681,7 +828,7 @@ export class MarketplaceService implements OnModuleInit {
       }
 
       return this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.EMAILED,
+        status: successStatus,
         emailError: customerEmailError,
       });
     } catch (err) {
@@ -752,6 +899,12 @@ export class MarketplaceService implements OnModuleInit {
   async findOrderByNumberPublic(orderNumber: string) {
     const order = await this.repo.findOrderByNumber(orderNumber);
     if (!order) throw new NotFoundException('Order not found');
+    const settings = await this.repo.getSettings();
+    const bankTransfer =
+      order.paymentMethod === MarketplacePaymentMethod.BANK_TRANSFER &&
+      order.status === MarketplaceOrderStatus.AWAITING_PAYMENT
+        ? this.bankTransferDetailsFromSettings(settings)
+        : null;
     return {
       orderNumber: order.orderNumber,
       status: order.status,
@@ -762,6 +915,7 @@ export class MarketplaceService implements OnModuleInit {
       discountTotalCents: order.discountTotalCents,
       currency: order.currency,
       paidAt: order.paidAt,
+      bankTransfer,
       items: order.items.map((i) => ({
         name: i.name,
         sku: i.sku,

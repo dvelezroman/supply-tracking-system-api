@@ -8,6 +8,15 @@ export type OrderEmailLine = {
   unitPriceCents: number;
 };
 
+export type BankTransferEmailDetails = {
+  bankName: string;
+  bankAccountType: string;
+  bankAccountNumber: string;
+  bankBeneficiaryName: string;
+  bankBeneficiaryRuc: string;
+  bankContactEmail?: string | null;
+};
+
 export type OrderEmailBase = {
   orderNumber: string;
   customerName: string;
@@ -21,7 +30,73 @@ export type OrderEmailBase = {
   currency: string;
   items: OrderEmailLine[];
   fromName?: string | null;
+  paymentMethod?: 'EMAIL' | 'PAYPAL' | 'BANK_TRANSFER' | string;
+  /** When true, email is a post-payment confirmation. */
+  paymentConfirmed?: boolean;
+  bankTransfer?: BankTransferEmailDetails | null;
 };
+
+export function buildBankTransferInstructionsHtml(
+  payload: OrderEmailBase,
+): string {
+  if (payload.paymentMethod !== 'BANK_TRANSFER' || !payload.bankTransfer) {
+    return '';
+  }
+  const b = payload.bankTransfer;
+  const amount = formatMoney(payload.subtotalCents, payload.currency);
+  const rows = [
+    ['Banco', b.bankName],
+    ['Tipo de cuenta', b.bankAccountType],
+    ['Número de cuenta', b.bankAccountNumber],
+    ['Beneficiario', b.bankBeneficiaryName],
+    ['RUC', b.bankBeneficiaryRuc],
+    ['Monto', amount],
+    ['Referencia', payload.orderNumber],
+  ];
+  if (b.bankContactEmail) {
+    rows.push(['Comprobante a', b.bankContactEmail]);
+  }
+  const rowHtml = rows
+    .map(
+      ([label, value]) => `<tr>
+        <td style="padding:6px 0;font-size:13px;color:#64748b;width:40%;">${escapeHtml(label)}</td>
+        <td style="padding:6px 0;font-size:14px;font-weight:600;color:#0f172a;">${escapeHtml(value)}</td>
+      </tr>`,
+    )
+    .join('');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;margin:16px 0 0;">
+    <tr>
+      <td style="padding:14px 16px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#1d4ed8;margin-bottom:8px;">Transferencia bancaria</div>
+        <p style="margin:0 0 10px;font-size:13px;line-height:1.5;color:#1e3a8a;">Transfiera el monto exacto y use el número de pedido como referencia.</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rowHtml}</table>
+      </td>
+    </tr>
+  </table>`;
+}
+
+export function buildBankTransferInstructionsText(
+  payload: OrderEmailBase,
+): string {
+  if (payload.paymentMethod !== 'BANK_TRANSFER' || !payload.bankTransfer) {
+    return '';
+  }
+  const b = payload.bankTransfer;
+  const lines = [
+    '--- Transferencia bancaria ---',
+    `Banco: ${b.bankName}`,
+    `Tipo: ${b.bankAccountType}`,
+    `Cuenta: ${b.bankAccountNumber}`,
+    `Beneficiario: ${b.bankBeneficiaryName}`,
+    `RUC: ${b.bankBeneficiaryRuc}`,
+    `Monto: ${formatMoney(payload.subtotalCents, payload.currency)}`,
+    `Referencia: ${payload.orderNumber}`,
+  ];
+  if (b.bankContactEmail) {
+    lines.push(`Comprobante a: ${b.bankContactEmail}`);
+  }
+  return lines.join('\n');
+}
 
 export function formatMoney(cents: number, currency: string): string {
   return new Intl.NumberFormat('es-EC', {

@@ -18,6 +18,7 @@ import {
 export enum OrderPaymentMethodDto {
   EMAIL = 'EMAIL',
   PAYPAL = 'PAYPAL',
+  BANK_TRANSFER = 'BANK_TRANSFER',
 }
 
 export class CreateOrderItemDto {

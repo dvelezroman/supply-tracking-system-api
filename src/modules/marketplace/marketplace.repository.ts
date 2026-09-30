@@ -323,6 +323,57 @@ export class MarketplaceRepository {
     });
   }
 
+  /** Create EMAIL / BANK_TRANSFER order awaiting payment (stock decremented on confirm). */
+  async createAwaitingOfflineOrder(args: {
+    orderNumber: string;
+    customerName: string;
+    customerEmail: string;
+    customerPhone?: string;
+    customerAddress?: string;
+    notes?: string;
+    currency: string;
+    paymentMethod:
+      | typeof MarketplacePaymentMethod.EMAIL
+      | typeof MarketplacePaymentMethod.BANK_TRANSFER;
+    lines: Array<{ productId: string; qty: number }>;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const { resolved, subtotalCents, listSubtotalCents, orderCurrency } =
+        await this.resolveLines(tx, args.lines, { decrementStock: false });
+
+      return tx.marketplaceOrder.create({
+        data: {
+          orderNumber: args.orderNumber,
+          customerName: args.customerName,
+          customerEmail: args.customerEmail,
+          customerPhone: args.customerPhone,
+          customerAddress: args.customerAddress,
+          notes: args.notes,
+          subtotalCents,
+          listSubtotalCents,
+          discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          currency: orderCurrency,
+          paymentMethod: args.paymentMethod,
+          status: MarketplaceOrderStatus.AWAITING_PAYMENT,
+          items: {
+            create: resolved.map((r) => ({
+              productId: r.productId,
+              name: r.name,
+              sku: r.sku,
+              listUnitPriceCents: r.listUnitPriceCents,
+              discountPercent: r.discountPercent,
+              promoDiscountPercent: r.promoDiscountPercent,
+              unitPriceCents: r.unitPriceCents,
+              qty: r.qty,
+              imageUrl: r.imageUrl,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+    });
+  }
+
   /** Decrement stock for an awaiting PayPal order (idempotent if already past AWAITING). */
   async decrementStockForOrder(orderId: string) {
     return this.prisma.$transaction(async (tx) => {

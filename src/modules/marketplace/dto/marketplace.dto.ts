@@ -234,6 +234,49 @@ export class UpdateMarketplaceSettingsDto {
   @IsBoolean()
   onlinePaymentsEnabled?: boolean;
 
+  @ApiPropertyOptional({
+    description: 'Enable bank transfer option on store checkout',
+  })
+  @IsOptional()
+  @IsBoolean()
+  bankTransferEnabled?: boolean;
+
+  @ApiPropertyOptional({ example: 'Banco Pichincha' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankName?: string | null;
+
+  @ApiPropertyOptional({ example: 'Cuenta de ahorro transaccional' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  bankAccountType?: string | null;
+
+  @ApiPropertyOptional({ example: '2216329132' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  bankAccountNumber?: string | null;
+
+  @ApiPropertyOptional({ example: 'Jaraminay S.A.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  bankBeneficiaryName?: string | null;
+
+  @ApiPropertyOptional({ example: '0993340332001' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  bankBeneficiaryRuc?: string | null;
+
+  @ApiPropertyOptional({ example: 'sociedadjaramillominaya@gmail.com' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  bankContactEmail?: string | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -1,5 +1,7 @@
 import {
   buildPlainOrderSummary,
+  buildBankTransferInstructionsHtml,
+  buildBankTransferInstructionsText,
   escapeHtml,
   formatMoney,
   type OrderEmailBase,
@@ -16,9 +18,25 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
   subject: string;
 } {
   const brand = payload.fromName?.trim() || 'Marea Alta Tienda';
-  const firstName = escapeHtml(payload.customerName.trim().split(/\s+/)[0] || payload.customerName);
+  const firstName = escapeHtml(
+    payload.customerName.trim().split(/\s+/)[0] || payload.customerName,
+  );
   const orderRef = escapeHtml(payload.orderNumber);
   const confirmUrl = escapeHtml(payload.orderConfirmationUrl);
+  const paid = !!payload.paymentConfirmed;
+  const bank = payload.paymentMethod === 'BANK_TRANSFER';
+
+  const nextStepCopy = paid
+    ? 'Tu pago fue confirmado. Prepararemos tu pedido y te contactaremos para la entrega.'
+    : bank
+      ? 'Completa la transferencia con los datos abajo. Usa el número de pedido como referencia y envíanos el comprobante.'
+      : 'Nuestro equipo confirmará disponibilidad y coordinará contigo el pago y la entrega. Si necesitas aclarar algo, responde a este correo.';
+
+  const heroSubtitle = paid
+    ? 'Tu pago fue recibido. Gracias por comprar con nosotros.'
+    : bank
+      ? 'Pedido registrado. Completa la transferencia para confirmarlo.'
+      : 'Recibimos tu pedido y ya lo estamos revisando.';
 
   const itemCards = payload.items
     .map((i) => {
@@ -54,7 +72,7 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
             <td style="background:linear-gradient(135deg,#0a2647 0%,#144272 100%);border-radius:16px 16px 0 0;padding:32px 24px;text-align:center;" class="px-mobile">
               <div style="width:48px;height:48px;margin:0 auto 16px;background:rgba(255,255,255,.15);border-radius:50%;line-height:48px;font-size:22px;">✓</div>
               <div class="hero-title" style="font-size:24px;font-weight:700;color:#ffffff;line-height:1.25;margin:0;">¡Gracias, ${firstName}!</div>
-              <div style="font-size:15px;color:rgba(255,255,255,.9);margin-top:12px;line-height:1.5;">Recibimos tu pedido y ya lo estamos revisando.</div>
+              <div style="font-size:15px;color:rgba(255,255,255,.9);margin-top:12px;line-height:1.5;">${heroSubtitle}</div>
               <div style="display:inline-block;margin-top:18px;padding:8px 14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;font-size:13px;font-weight:600;color:#ffffff;letter-spacing:.02em;">Pedido ${orderRef}</div>
             </td>
           </tr>
@@ -63,11 +81,12 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;margin-bottom:20px;">
                 <tr>
                   <td style="padding:14px 16px;font-size:14px;line-height:1.55;color:#065f46;">
-                    <strong>¿Qué sigue?</strong> Nuestro equipo confirmará disponibilidad y coordinará contigo el pago y la entrega. Si necesitas aclarar algo, responde a este correo.
+                    <strong>¿Qué sigue?</strong> ${nextStepCopy}
                   </td>
                 </tr>
               </table>
-              <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:0 0 12px;">Tu pedido</div>
+              ${buildBankTransferInstructionsHtml(payload)}
+              <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:20px 0 12px;">Tu pedido</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${itemCards}</table>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">
                 <tr>
@@ -124,17 +143,24 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
     bodyHtml,
   });
 
+  const bankText = buildBankTransferInstructionsText(payload);
   const textLines = [
-    buildPlainOrderSummary(payload, 'Confirmación de pedido'),
+    buildPlainOrderSummary(
+      payload,
+      paid ? 'Pago confirmado' : 'Confirmación de pedido',
+    ),
     '',
     `Ver pedido: ${payload.orderConfirmationUrl}`,
     '',
-    'Nuestro equipo te contactará para confirmar pago y entrega.',
-  ];
+    nextStepCopy,
+    bankText ? `\n${bankText}` : '',
+  ].filter(Boolean);
 
   return {
     html,
     text: textLines.join('\n'),
-    subject: `[${brand}] Confirmación de pedido ${payload.orderNumber}`,
+    subject: paid
+      ? `[${brand}] Pago confirmado — pedido ${payload.orderNumber}`
+      : `[${brand}] Confirmación de pedido ${payload.orderNumber}`,
   };
 }

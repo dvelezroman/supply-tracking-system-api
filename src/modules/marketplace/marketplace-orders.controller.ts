@@ -31,7 +31,8 @@ export class MarketplaceOrdersPublicController {
 
   @Post()
   @ApiOperation({
-    summary: 'Place marketplace order (guest checkout: EMAIL or PAYPAL)',
+    summary:
+      'Place marketplace order (guest checkout: EMAIL, BANK_TRANSFER or PAYPAL)',
   })
   @ApiResponse({ status: 201, description: 'Order created' })
   @ApiResponse({ status: 409, description: 'Insufficient stock' })
@@ -84,5 +85,14 @@ export class MarketplaceOrdersAdminController {
   @ApiOperation({ summary: 'Cancel order and restock inventory when applicable' })
   cancel(@Param('id') id: string) {
     return this.marketplace.cancelOrder(id);
+  }
+
+  @Post(':id/confirm-payment')
+  @ApiOperation({
+    summary:
+      'Confirm offline payment (EMAIL / BANK_TRANSFER), decrement stock, mark PAID',
+  })
+  confirmPayment(@Param('id') id: string) {
+    return this.marketplace.confirmOfflinePayment(id);
   }
 }
