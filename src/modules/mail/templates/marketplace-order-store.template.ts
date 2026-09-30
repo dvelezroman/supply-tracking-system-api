@@ -15,6 +15,30 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
 } {
   const brand = payload.fromName?.trim() || 'Marea Alta Tienda';
   const orderRef = escapeHtml(payload.orderNumber);
+  const kind = payload.emailKind
+    ? payload.emailKind
+    : payload.paymentConfirmed
+      ? 'ORDER_PAID'
+      : 'ORDER_REQUEST';
+
+  const heroLabel =
+    kind === 'ORDER_PAID'
+      ? 'Pedido pagado'
+      : kind === 'PAYMENT_FAILED'
+        ? 'Pago fallido'
+        : 'Nuevo pedido';
+  const heroSub =
+    kind === 'ORDER_PAID'
+      ? `Pago confirmado · ${escapeHtml(brand)}`
+      : kind === 'PAYMENT_FAILED'
+        ? `El cobro no se completó · ${escapeHtml(brand)}`
+        : `Solicitud desde la tienda en línea · ${escapeHtml(brand)}`;
+  const subjectPrefix =
+    kind === 'ORDER_PAID'
+      ? 'Pedido pagado'
+      : kind === 'PAYMENT_FAILED'
+        ? 'Pago fallido'
+        : 'Pedido';
 
   const itemRows = payload.items
     .map((i) => {
@@ -36,12 +60,49 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
     })
     .join('');
 
+  const taxCents = payload.taxCents ?? 0;
+  const totalCents = payload.totalCents ?? payload.subtotalCents;
+  const totalsFooter =
+    taxCents > 0
+      ? `<tr style="background:#f8fafc;">
+          <td colspan="3" style="padding:10px 16px;font-size:13px;color:#475569;text-align:right;">Subtotal</td>
+          <td style="padding:10px 16px;font-size:14px;color:#0f172a;text-align:right;">${formatMoney(payload.subtotalCents, payload.currency)}</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td colspan="3" style="padding:10px 16px;font-size:13px;color:#475569;text-align:right;">IVA (15%)</td>
+          <td style="padding:10px 16px;font-size:14px;color:#0f172a;text-align:right;">${formatMoney(taxCents, payload.currency)}</td>
+        </tr>
+        <tr style="background:#0a2647;">
+          <td colspan="3" style="padding:16px;font-size:14px;font-weight:600;color:#ffffff;text-align:right;">Total</td>
+          <td style="padding:16px;font-size:18px;font-weight:700;color:#ffb4b4;text-align:right;">${formatMoney(totalCents, payload.currency)}</td>
+        </tr>`
+      : `<tr style="background:#0a2647;">
+          <td colspan="3" style="padding:16px;font-size:14px;font-weight:600;color:#ffffff;text-align:right;">Subtotal</td>
+          <td style="padding:16px;font-size:18px;font-weight:700;color:#ffb4b4;text-align:right;">${formatMoney(payload.subtotalCents, payload.currency)}</td>
+        </tr>`;
+
+  const payphoneMeta =
+    payload.authorizationCode || payload.payphoneTransactionId
+      ? `<p style="margin:12px 0 0;font-size:14px;line-height:1.55;color:#334155;">
+          ${
+            payload.authorizationCode
+              ? `<strong style="color:#0f172a;">Autorización:</strong> ${escapeHtml(payload.authorizationCode)}`
+              : ''
+          }
+          ${
+            payload.payphoneTransactionId
+              ? `${payload.authorizationCode ? '<br/>' : ''}<strong style="color:#0f172a;">Transacción:</strong> ${escapeHtml(payload.payphoneTransactionId)}`
+              : ''
+          }
+        </p>`
+      : '';
+
   const bodyHtml = `
           <tr>
             <td style="background:linear-gradient(135deg,#0a2647 0%,#144272 100%);border-radius:16px 16px 0 0;padding:28px 24px;" class="px-mobile">
-              <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.75);margin-bottom:8px;">Nuevo pedido</div>
+              <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.75);margin-bottom:8px;">${heroLabel}</div>
               <div class="hero-title" style="font-size:26px;font-weight:700;color:#ffffff;line-height:1.2;margin:0;">${orderRef}</div>
-              <div style="font-size:14px;color:rgba(255,255,255,.85);margin-top:10px;line-height:1.5;">Solicitud desde la tienda en línea · ${escapeHtml(brand)}</div>
+              <div style="font-size:14px;color:rgba(255,255,255,.85);margin-top:10px;line-height:1.5;">${heroSub}</div>
             </td>
           </tr>
           <tr>
@@ -69,6 +130,7 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
                   ? `<p style="margin:12px 0 0;font-size:14px;line-height:1.55;color:#334155;"><strong style="color:#0f172a;">Pago:</strong> ${escapeHtml(payload.paymentMethod)}</p>`
                   : ''
               }
+              ${payphoneMeta}
               ${buildBankTransferInstructionsHtml(payload)}
               <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:24px 0 10px;">Productos</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
@@ -81,12 +143,7 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
                   </tr>
                 </thead>
                 <tbody>${itemRows}</tbody>
-                <tfoot>
-                  <tr style="background:#0a2647;">
-                    <td colspan="3" style="padding:16px;font-size:14px;font-weight:600;color:#ffffff;text-align:right;">Subtotal</td>
-                    <td style="padding:16px;font-size:18px;font-weight:700;color:#ffb4b4;text-align:right;">${formatMoney(payload.subtotalCents, payload.currency)}</td>
-                  </tr>
-                </tfoot>
+                <tfoot>${totalsFooter}</tfoot>
               </table>
               <p style="margin:20px 0 0;font-size:13px;line-height:1.5;color:#64748b;">Responde a este correo para contactar directamente al cliente (reply-to configurado).</p>
             </td>
@@ -98,8 +155,8 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
           </tr>`;
 
   const html = wrapEmailDocument({
-    preheader: `Nuevo pedido ${payload.orderNumber} de ${payload.customerName}`,
-    title: `Pedido ${payload.orderNumber}`,
+    preheader: `${heroLabel} ${payload.orderNumber} de ${payload.customerName}`,
+    title: `${subjectPrefix} ${payload.orderNumber}`,
     bodyHtml,
   });
 
@@ -107,12 +164,12 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
   return {
     html,
     text: [
-      buildPlainOrderSummary(payload, 'Nuevo pedido (tienda)'),
+      buildPlainOrderSummary(payload, heroLabel),
       payload.paymentMethod ? `Método de pago: ${payload.paymentMethod}` : '',
       bankText,
     ]
       .filter(Boolean)
       .join('\n\n'),
-    subject: `[Marea Alta] Pedido ${payload.orderNumber}`,
+    subject: `[Marea Alta] ${subjectPrefix} ${payload.orderNumber}`,
   };
 }

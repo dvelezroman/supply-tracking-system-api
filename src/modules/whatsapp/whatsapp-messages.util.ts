@@ -28,6 +28,8 @@ function paymentMethodLabel(method?: string | null): string {
       return 'Transferencia';
     case 'PAYPAL':
       return 'PayPal';
+    case 'CARD':
+      return 'Tarjeta';
     case 'EMAIL':
       return 'Offline';
     default:

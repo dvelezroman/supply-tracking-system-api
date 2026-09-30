@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import {
   CapturePayPalOrderDto,
+  ConfirmPayphonePaymentDto,
   CreateMarketplaceOrderDto,
   MarketplaceOrderQueryDto,
 } from './dto/create-order.dto';
@@ -32,12 +33,21 @@ export class MarketplaceOrdersPublicController {
   @Post()
   @ApiOperation({
     summary:
-      'Place marketplace order (guest checkout: EMAIL, BANK_TRANSFER or PAYPAL)',
+      'Place marketplace order (guest checkout: EMAIL, BANK_TRANSFER, PAYPAL or CARD/Payphone)',
   })
   @ApiResponse({ status: 201, description: 'Order created' })
   @ApiResponse({ status: 409, description: 'Insufficient stock' })
   create(@Body() dto: CreateMarketplaceOrderDto) {
     return this.marketplace.placeOrder(dto);
+  }
+
+  @Post('payphone/confirm')
+  @ApiOperation({
+    summary:
+      'Confirm Payphone Cajita payment (server-side Confirm API; call from return URL)',
+  })
+  confirmPayphone(@Body() dto: ConfirmPayphonePaymentDto) {
+    return this.marketplace.confirmCardPayment(dto);
   }
 
   @Post(':orderNumber/paypal/capture')

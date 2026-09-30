@@ -251,6 +251,8 @@ export class MarketplaceRepository {
           subtotalCents,
           listSubtotalCents,
           discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          taxCents: 0,
+          totalCents: subtotalCents,
           currency: orderCurrency,
           paymentMethod: MarketplacePaymentMethod.EMAIL,
           status: MarketplaceOrderStatus.PENDING,
@@ -301,6 +303,8 @@ export class MarketplaceRepository {
           subtotalCents,
           listSubtotalCents,
           discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          taxCents: 0,
+          totalCents: subtotalCents,
           currency: orderCurrency,
           paymentMethod: MarketplacePaymentMethod.PAYPAL,
           status: MarketplaceOrderStatus.AWAITING_PAYMENT,
@@ -355,6 +359,8 @@ export class MarketplaceRepository {
           subtotalCents,
           listSubtotalCents,
           discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          taxCents: 0,
+          totalCents: subtotalCents,
           currency: orderCurrency,
           paymentMethod: args.paymentMethod,
           status: MarketplaceOrderStatus.AWAITING_PAYMENT,
@@ -413,6 +419,101 @@ export class MarketplaceRepository {
         where: { id: orderId },
         include: { items: true },
       });
+    });
+  }
+
+  /** Create Payphone CARD intent order without decrementing stock. */
+  async createPendingCardOrder(args: {
+    orderNumber: string;
+    customerName: string;
+    customerEmail: string;
+    customerPhone?: string;
+    customerAddress?: string;
+    notes?: string;
+    currency: string;
+    payphoneClientTxId: string;
+    notifyWhatsapp?: boolean;
+    /** Returns { taxCents, totalCents } from sale subtotal. */
+    computeTax: (subtotalCents: number) => { taxCents: number; totalCents: number };
+    lines: Array<{ productId: string; qty: number }>;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const { resolved, subtotalCents, listSubtotalCents, orderCurrency } =
+        await this.resolveLines(tx, args.lines, { decrementStock: false });
+
+      const { taxCents, totalCents } = args.computeTax(subtotalCents);
+
+      const order = await tx.marketplaceOrder.create({
+        data: {
+          orderNumber: args.orderNumber,
+          customerName: args.customerName,
+          customerEmail: args.customerEmail,
+          customerPhone: args.customerPhone,
+          customerAddress: args.customerAddress,
+          notes: args.notes,
+          subtotalCents,
+          listSubtotalCents,
+          discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          taxCents,
+          totalCents,
+          currency: orderCurrency,
+          paymentMethod: MarketplacePaymentMethod.CARD,
+          status: MarketplaceOrderStatus.AWAITING_PAYMENT,
+          payphoneClientTxId: args.payphoneClientTxId,
+          notifyWhatsapp: args.notifyWhatsapp ?? true,
+          items: {
+            create: resolved.map((r) => ({
+              productId: r.productId,
+              name: r.name,
+              sku: r.sku,
+              listUnitPriceCents: r.listUnitPriceCents,
+              discountPercent: r.discountPercent,
+              promoDiscountPercent: r.promoDiscountPercent,
+              unitPriceCents: r.unitPriceCents,
+              qty: r.qty,
+              imageUrl: r.imageUrl,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      await tx.marketplacePayment.create({
+        data: {
+          orderId: order.id,
+          clientTransactionId: args.payphoneClientTxId,
+          status: 'INITIATED',
+          amountCents: totalCents,
+          taxCents,
+          currency: orderCurrency,
+        },
+      });
+
+      return order;
+    });
+  }
+
+  findOrderByPayphoneClientTxId(clientTransactionId: string) {
+    return this.prisma.marketplaceOrder.findUnique({
+      where: { payphoneClientTxId: clientTransactionId },
+      include: { items: true, payments: true },
+    });
+  }
+
+  findPaymentByClientTxId(clientTransactionId: string) {
+    return this.prisma.marketplacePayment.findUnique({
+      where: { clientTransactionId },
+      include: { order: { include: { items: true } } },
+    });
+  }
+
+  updatePayment(
+    id: string,
+    data: Prisma.MarketplacePaymentUpdateInput,
+  ) {
+    return this.prisma.marketplacePayment.update({
+      where: { id },
+      data,
     });
   }
 

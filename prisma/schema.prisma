@@ -175,6 +175,13 @@ enum MarketplacePaymentMethod {
   EMAIL
   PAYPAL
   BANK_TRANSFER
+  CARD
+}
+
+enum MarketplacePaymentStatus {
+  INITIATED
+  CONFIRMED
+  FAILED
 }
 
 /// Commercial store listing (separate from supply-chain Product catalogue).
@@ -241,17 +248,24 @@ model MarketplaceOrder {
   listSubtotalCents Int               @default(0)
   /// Total savings (listSubtotalCents − subtotalCents).
   discountTotalCents Int              @default(0)
+  /// IVA cents (exclusive) charged on card checkout; 0 for offline/PayPal.
+  taxCents       Int                    @default(0)
+  /// Grand total charged (subtotalCents + taxCents for CARD).
+  totalCents     Int                    @default(0)
   currency       String                 @default("USD")
   /// Set when email send failed (SMTP missing or transport error).
   emailError     String?
   paypalOrderId  String?                @unique
   paypalCaptureId String?
+  /// Payphone clientTransactionId (≤50 chars).
+  payphoneClientTxId String?            @unique
   paidAt         DateTime?
   paymentError   String?
   /// When false, skip customer WhatsApp for this order (opt-out).
   notifyWhatsapp Boolean                @default(true)
 
   items MarketplaceOrderItem[]
+  payments MarketplacePayment[]
   whatsappNotificationLogs WhatsappNotificationLog[]
 
   createdAt DateTime @default(now())
@@ -260,6 +274,28 @@ model MarketplaceOrder {
   @@index([status])
   @@index([createdAt])
   @@map("marketplace_orders")
+}
+
+/// Payphone (and future PSP) payment attempts linked to a marketplace order.
+model MarketplacePayment {
+  id                   String                   @id @default(uuid())
+  orderId              String
+  order                MarketplaceOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Payphone redirect `id` query param.
+  payphoneId           Int?
+  clientTransactionId  String                   @unique
+  status               MarketplacePaymentStatus @default(INITIATED)
+  amountCents          Int
+  taxCents             Int                      @default(0)
+  currency             String                   @default("USD")
+  authorizationCode    String?
+  transactionId        String?
+  rawResponse          Json?
+  createdAt            DateTime                 @default(now())
+  confirmedAt          DateTime?
+
+  @@index([orderId])
+  @@map("marketplace_payments")
 }
 
 model MarketplaceOrderItem {
@@ -293,6 +329,8 @@ model MarketplaceSettings {
   fromName               String?
   /// When true, checkout offers PayPal (mock in non-prod without keys, or live with keys).
   onlinePaymentsEnabled  Boolean @default(false)
+  /// When true, checkout offers Payphone card payments (requires PAYPHONE_* env).
+  cardPaymentsEnabled    Boolean @default(false)
   /// When true, checkout offers bank transfer with configured account details.
   bankTransferEnabled    Boolean @default(true)
   bankName               String?

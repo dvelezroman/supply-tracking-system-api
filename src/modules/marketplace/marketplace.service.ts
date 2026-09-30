@@ -33,6 +33,7 @@ import {
 import { StorageService } from '../storage/storage.service';
 import {
   CapturePayPalOrderDto,
+  ConfirmPayphonePaymentDto,
   CreateMarketplaceOrderDto,
   OrderPaymentMethodDto,
 } from './dto/create-order.dto';
@@ -44,6 +45,8 @@ import {
 import { clampDiscountPercent } from './marketplace-pricing.util';
 import { MarketplaceRepository } from './marketplace.repository';
 import { WhatsappNotificationsService } from '../whatsapp/whatsapp-notifications.service';
+import { PayphoneService } from '../payphone/payphone.service';
+import { truncateClientTxId } from '../payphone/payphone-amounts.util';
 import { normalizePhoneE164 } from '../../common/phone.util';
 
 @Injectable()
@@ -58,6 +61,7 @@ export class MarketplaceService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly paypal: PaypalService,
     private readonly paypalWebhooks: PaypalWebhookService,
+    private readonly payphone: PayphoneService,
     private readonly whatsapp: WhatsappNotificationsService,
   ) {}
 
@@ -412,6 +416,10 @@ export class MarketplaceService implements OnModuleInit {
       onlinePaymentsEnabled: s.onlinePaymentsEnabled,
       paypalAvailable: this.paypal.isCheckoutAvailable(s.onlinePaymentsEnabled),
       paypalMode,
+      cardPaymentsEnabled: s.cardPaymentsEnabled,
+      payphoneAvailable: this.payphone.isCheckoutAvailable(
+        s.cardPaymentsEnabled,
+      ),
       bankTransferEnabled: !!bankTransfer,
       bankTransfer,
     };
@@ -429,6 +437,9 @@ export class MarketplaceService implements OnModuleInit {
     if (dto.storeEnabled !== undefined) data.storeEnabled = dto.storeEnabled;
     if (dto.onlinePaymentsEnabled !== undefined) {
       data.onlinePaymentsEnabled = dto.onlinePaymentsEnabled;
+    }
+    if (dto.cardPaymentsEnabled !== undefined) {
+      data.cardPaymentsEnabled = dto.cardPaymentsEnabled;
     }
     if (dto.bankTransferEnabled !== undefined) {
       data.bankTransferEnabled = dto.bankTransferEnabled;
@@ -463,6 +474,9 @@ export class MarketplaceService implements OnModuleInit {
     const method = dto.paymentMethod ?? OrderPaymentMethodDto.EMAIL;
     if (method === OrderPaymentMethodDto.PAYPAL) {
       return this.startPayPalCheckout(dto);
+    }
+    if (method === OrderPaymentMethodDto.CARD) {
+      return this.startCardCheckout(dto);
     }
     if (
       method === OrderPaymentMethodDto.BANK_TRANSFER ||
@@ -604,6 +618,318 @@ export class MarketplaceService implements OnModuleInit {
       });
       throw new BadRequestException(`Unable to start PayPal checkout: ${reason}`);
     }
+  }
+
+  async startCardCheckout(dto: CreateMarketplaceOrderDto) {
+    const settings = await this.repo.getSettings();
+    if (!settings.storeEnabled) {
+      throw new BadRequestException('Store is currently disabled');
+    }
+    if (!this.payphone.isCheckoutAvailable(settings.cardPaymentsEnabled)) {
+      throw new BadRequestException('Card payments are not available');
+    }
+
+    const phoneRaw = dto.customerPhone?.trim();
+    const phone = normalizePhoneE164(phoneRaw);
+    if (!phone) {
+      throw new BadRequestException(
+        'A valid customer phone is required for card payment',
+      );
+    }
+
+    const mergedLines = this.mergeOrderLines(dto.items);
+    const orderNumber = this.generateOrderNumber();
+    // clientTransactionId ≤ 50 chars (Payphone)
+    const clientTransactionId = truncateClientTxId(
+      `PP-${orderNumber}-${randomUUID().replace(/-/g, '').slice(0, 12)}`,
+    );
+
+    let order;
+    try {
+      order = await this.repo.createPendingCardOrder({
+        orderNumber,
+        customerName: dto.customerName.trim(),
+        customerEmail: dto.customerEmail.trim().toLowerCase(),
+        customerPhone: phone,
+        customerAddress: dto.customerAddress?.trim(),
+        notes: dto.notes?.trim(),
+        currency: 'USD',
+        payphoneClientTxId: clientTransactionId,
+        notifyWhatsapp: dto.notifyWhatsapp !== false,
+        computeTax: (subtotalCents) => {
+          const amounts = this.payphone.buildAmounts(subtotalCents);
+          return { taxCents: amounts.tax, totalCents: amounts.amount };
+        },
+        lines: mergedLines,
+      });
+    } catch (err) {
+      this.rethrowOrderPlacementError(err);
+    }
+
+    const box = this.payphone.buildBoxConfig({
+      clientTransactionId,
+      subtotalCents: order.subtotalCents,
+      currency: order.currency,
+      orderNumber: order.orderNumber,
+      email: order.customerEmail,
+      phoneNumber: order.customerPhone ?? undefined,
+    });
+
+    const frontendBase = (
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
+    ).replace(/\/$/, '');
+    await this.notifyOrderWhatsapp({
+      order,
+      settings,
+      phase: 'awaiting',
+      confirmationUrl: `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`,
+    });
+
+    return {
+      ...order,
+      clientTransactionId,
+      payment: box,
+    };
+  }
+
+  async confirmCardPayment(dto: ConfirmPayphonePaymentDto) {
+    const clientTxId = truncateClientTxId(dto.clientTransactionId);
+    const paymentRow = await this.repo.findPaymentByClientTxId(clientTxId);
+    const order =
+      paymentRow?.order ??
+      (await this.repo.findOrderByPayphoneClientTxId(clientTxId));
+
+    if (!order) {
+      throw new NotFoundException('Order not found for this payment');
+    }
+
+    if (
+      order.status === MarketplaceOrderStatus.PAID ||
+      order.status === MarketplaceOrderStatus.EMAILED
+    ) {
+      return {
+        orderNumber: order.orderNumber,
+        status: order.status,
+        paymentStatus: 'CONFIRMED' as const,
+      };
+    }
+
+    if (order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+      throw new BadRequestException('Order is not awaiting payment');
+    }
+
+    if (
+      order.payphoneClientTxId &&
+      order.payphoneClientTxId !== clientTxId
+    ) {
+      throw new BadRequestException('clientTransactionId mismatch');
+    }
+
+    const confirm = await this.payphone.confirmTransaction(
+      dto.payphoneId,
+      clientTxId,
+    );
+
+    if (!this.payphone.isApproved(confirm)) {
+      const reason =
+        confirm.message ||
+        confirm.transactionStatus ||
+        `Payphone statusCode ${confirm.statusCode ?? 'unknown'}`;
+      if (paymentRow) {
+        await this.repo.updatePayment(paymentRow.id, {
+          status: 'FAILED',
+          payphoneId: dto.payphoneId,
+          rawResponse: confirm as unknown as Prisma.InputJsonValue,
+        });
+      }
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: reason,
+      });
+
+      const settings = await this.repo.getSettings();
+      try {
+        await this.sendPaymentFailedAdminNotice(order, settings, reason);
+      } catch (mailErr) {
+        this.logger.warn(
+          `Payment-failed admin email skipped for ${order.orderNumber}: ${
+            mailErr instanceof Error ? mailErr.message : String(mailErr)
+          }`,
+        );
+      }
+
+      throw new BadRequestException({
+        message: 'Payment was not approved',
+        details: { transactionStatus: confirm.transactionStatus, reason },
+      });
+    }
+
+    const expectedAmount = order.totalCents || order.subtotalCents;
+    if (
+      typeof confirm.amount === 'number' &&
+      confirm.amount > 0 &&
+      confirm.amount !== expectedAmount
+    ) {
+      this.logger.warn(
+        `Payphone amount mismatch for ${order.orderNumber}: expected ${expectedAmount}, got ${confirm.amount}`,
+      );
+      if (paymentRow) {
+        await this.repo.updatePayment(paymentRow.id, {
+          status: 'FAILED',
+          payphoneId: dto.payphoneId,
+          rawResponse: confirm as unknown as Prisma.InputJsonValue,
+        });
+      }
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: `Amount mismatch: expected ${expectedAmount}, got ${confirm.amount}`,
+      });
+      throw new BadRequestException('Payment amount mismatch');
+    }
+
+    if (
+      confirm.currency &&
+      confirm.currency.toUpperCase() !== order.currency.toUpperCase()
+    ) {
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: `Currency mismatch: ${confirm.currency}`,
+      });
+      throw new BadRequestException('Payment currency mismatch');
+    }
+
+    try {
+      await this.repo.decrementStockForOrder(order.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.repo.updateOrder(order.id, {
+        status: MarketplaceOrderStatus.PAYMENT_FAILED,
+        paymentError: msg,
+      });
+      this.rethrowOrderPlacementError(err);
+    }
+
+    if (paymentRow) {
+      await this.repo.updatePayment(paymentRow.id, {
+        status: 'CONFIRMED',
+        payphoneId: dto.payphoneId,
+        authorizationCode: confirm.authorizationCode ?? null,
+        transactionId:
+          confirm.transactionId != null ? String(confirm.transactionId) : null,
+        rawResponse: confirm as unknown as Prisma.InputJsonValue,
+        confirmedAt: new Date(),
+      });
+    }
+
+    const paid = await this.repo.updateOrder(order.id, {
+      status: MarketplaceOrderStatus.PAID,
+      paidAt: new Date(),
+      paymentError: null,
+    });
+
+    const settings = await this.repo.getSettings();
+    const emailed = await this.sendOrderEmails(
+      {
+        ...paid,
+        taxCents: paid.taxCents,
+        totalCents: paid.totalCents,
+        authorizationCode: confirm.authorizationCode ?? null,
+        payphoneTransactionId:
+          confirm.transactionId != null ? String(confirm.transactionId) : null,
+      },
+      settings,
+      MarketplaceOrderStatus.PAID,
+      MarketplaceOrderStatus.PAID,
+      true,
+    );
+
+    return {
+      orderNumber: emailed.orderNumber,
+      status: emailed.status,
+      paymentStatus: 'CONFIRMED' as const,
+    };
+  }
+
+  private async sendPaymentFailedAdminNotice(
+    order: {
+      orderNumber: string;
+      customerName: string;
+      customerEmail: string;
+      customerPhone: string | null;
+      customerAddress: string | null;
+      notes: string | null;
+      subtotalCents: number;
+      listSubtotalCents: number;
+      discountTotalCents: number;
+      taxCents?: number;
+      totalCents?: number;
+      currency: string;
+      paymentMethod?: MarketplacePaymentMethod | string;
+      items: Array<{
+        name: string;
+        sku: string;
+        qty: number;
+        listUnitPriceCents: number;
+        discountPercent: number;
+        promoDiscountPercent: number;
+        unitPriceCents: number;
+      }>;
+    },
+    settings: {
+      orderNotificationEmail: string | null;
+      fromName: string | null;
+      bankTransferEnabled: boolean;
+      bankName: string | null;
+      bankAccountType: string | null;
+      bankAccountNumber: string | null;
+      bankBeneficiaryName: string | null;
+      bankBeneficiaryRuc: string | null;
+      bankContactEmail: string | null;
+    },
+    reason: string,
+  ) {
+    const to = this.resolveOrderNotificationTo(settings);
+    if (!to) return;
+    await this.mail.sendMarketplaceOrderToStore({
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+      customerPhone: order.customerPhone,
+      customerAddress: order.customerAddress,
+      notes: order.notes
+        ? `${order.notes}\n\n[Pago fallido] ${reason}`
+        : `[Pago fallido] ${reason}`,
+      subtotalCents: order.subtotalCents,
+      listSubtotalCents: order.listSubtotalCents,
+      discountTotalCents: order.discountTotalCents,
+      taxCents: order.taxCents ?? 0,
+      totalCents: order.totalCents ?? order.subtotalCents,
+      currency: order.currency,
+      paymentMethod: order.paymentMethod ?? MarketplacePaymentMethod.CARD,
+      paymentConfirmed: false,
+      emailKind: 'PAYMENT_FAILED',
+      items: order.items.map((i) => ({
+        name: i.name,
+        sku: i.sku,
+        qty: i.qty,
+        listUnitPriceCents: i.listUnitPriceCents,
+        discountPercent: i.discountPercent,
+        promoDiscountPercent: i.promoDiscountPercent,
+        unitPriceCents: i.unitPriceCents,
+      })),
+      fromName: settings.fromName,
+      to,
+    });
+  }
+
+  private resolveOrderNotificationTo(settings: {
+    orderNotificationEmail: string | null;
+  }): string {
+    return (
+      settings.orderNotificationEmail?.trim() ||
+      this.config.get<string>('contactEmail')?.trim() ||
+      ''
+    );
   }
 
   async capturePayPalOrder(
@@ -756,9 +1082,13 @@ export class MarketplaceService implements OnModuleInit {
       subtotalCents: number;
       listSubtotalCents: number;
       discountTotalCents: number;
+      taxCents?: number;
+      totalCents?: number;
       currency: string;
       paymentMethod?: MarketplacePaymentMethod | string;
       notifyWhatsapp?: boolean;
+      authorizationCode?: string | null;
+      payphoneTransactionId?: string | null;
       items: Array<{
         name: string;
         sku: string;
@@ -784,10 +1114,7 @@ export class MarketplaceService implements OnModuleInit {
     successStatus: MarketplaceOrderStatus = MarketplaceOrderStatus.EMAILED,
     paymentConfirmed = false,
   ) {
-    const to =
-      settings.orderNotificationEmail?.trim() ||
-      this.config.get<string>('contactEmail')?.trim() ||
-      '';
+    const to = this.resolveOrderNotificationTo(settings);
 
     if (!to) {
       const updated = await this.repo.updateOrder(order.id, {
@@ -809,6 +1136,11 @@ export class MarketplaceService implements OnModuleInit {
         ? this.bankTransferDetailsFromSettings(settings)
         : null;
 
+    const emailKind =
+      paymentConfirmed || order.paymentMethod === MarketplacePaymentMethod.CARD
+        ? ('ORDER_PAID' as const)
+        : ('ORDER_REQUEST' as const);
+
     const emailBase = {
       orderNumber: order.orderNumber,
       customerName: order.customerName,
@@ -819,9 +1151,14 @@ export class MarketplaceService implements OnModuleInit {
       subtotalCents: order.subtotalCents,
       listSubtotalCents: order.listSubtotalCents,
       discountTotalCents: order.discountTotalCents,
+      taxCents: order.taxCents ?? 0,
+      totalCents: order.totalCents ?? order.subtotalCents,
       currency: order.currency,
       paymentMethod: order.paymentMethod,
       paymentConfirmed,
+      emailKind: paymentConfirmed ? emailKind : ('ORDER_REQUEST' as const),
+      authorizationCode: order.authorizationCode ?? undefined,
+      payphoneTransactionId: order.payphoneTransactionId ?? undefined,
       bankTransfer,
       items: order.items.map((i) => ({
         name: i.name,
@@ -1012,6 +1349,8 @@ export class MarketplaceService implements OnModuleInit {
       subtotalCents: order.subtotalCents,
       listSubtotalCents: order.listSubtotalCents,
       discountTotalCents: order.discountTotalCents,
+      taxCents: order.taxCents,
+      totalCents: order.totalCents || order.subtotalCents,
       currency: order.currency,
       paidAt: order.paidAt,
       bankTransfer,

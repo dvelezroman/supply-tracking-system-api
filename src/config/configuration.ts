@@ -76,6 +76,23 @@ export default () => ({
       process.env.PAYPAL_FORCE_MOCK === 'true' ||
       process.env.PAYPAL_FORCE_MOCK === '1',
   },
+  payphone: {
+    token: process.env.PAYPHONE_TOKEN?.trim() || '',
+    storeId: process.env.PAYPHONE_STORE_ID?.trim() || '',
+    confirmUrl:
+      process.env.PAYPHONE_CONFIRM_URL?.trim() ||
+      'https://paymentbox.payphonetodoesposible.com/api/confirm',
+    paymentsEnabled:
+      process.env.PAYPHONE_PAYMENTS_ENABLED !== 'false' &&
+      process.env.PAYPHONE_PAYMENTS_ENABLED !== '0',
+    taxRateBps:
+      parseInt(process.env.MARKETPLACE_TAX_RATE_BPS ?? '1500', 10) || 1500,
+    confirmTimeoutMs:
+      parseInt(process.env.PAYPHONE_CONFIRM_TIMEOUT_MS ?? '15000', 10) || 15000,
+    /** Optional Ecuador coords for Cajita (Portoviejo default). */
+    lat: process.env.PAYPHONE_LAT?.trim() || '-1.0547',
+    lng: process.env.PAYPHONE_LNG?.trim() || '-80.4545',
+  },
   /** WhatsApp via Notificador Bitflow (WhatChimp). WhatsappService also reads process.env. */
   notificador: {
     enabled: process.env.NOTIFICADOR_ENABLED === 'true',

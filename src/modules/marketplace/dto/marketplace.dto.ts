@@ -235,6 +235,13 @@ export class UpdateMarketplaceSettingsDto {
   onlinePaymentsEnabled?: boolean;
 
   @ApiPropertyOptional({
+    description: 'Enable Payphone card payments on store checkout',
+  })
+  @IsOptional()
+  @IsBoolean()
+  cardPaymentsEnabled?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Enable bank transfer option on store checkout',
   })
   @IsOptional()

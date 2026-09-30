@@ -27,12 +27,17 @@ export type OrderEmailBase = {
   subtotalCents: number;
   listSubtotalCents?: number;
   discountTotalCents?: number;
+  taxCents?: number;
+  totalCents?: number;
   currency: string;
   items: OrderEmailLine[];
   fromName?: string | null;
-  paymentMethod?: 'EMAIL' | 'PAYPAL' | 'BANK_TRANSFER' | string;
+  paymentMethod?: 'EMAIL' | 'PAYPAL' | 'BANK_TRANSFER' | 'CARD' | string;
   /** When true, email is a post-payment confirmation. */
   paymentConfirmed?: boolean;
+  emailKind?: 'ORDER_REQUEST' | 'ORDER_PAID' | 'PAYMENT_FAILED';
+  authorizationCode?: string;
+  payphoneTransactionId?: string;
   bankTransfer?: BankTransferEmailDetails | null;
 };
 
@@ -165,6 +170,20 @@ export function buildPlainOrderSummary(
         ]
       : []),
     `Subtotal: ${formatMoney(payload.subtotalCents, payload.currency)}`,
+    ...(payload.taxCents && payload.taxCents > 0
+      ? [`IVA: ${formatMoney(payload.taxCents, payload.currency)}`]
+      : []),
+    ...(payload.totalCents &&
+    payload.totalCents > 0 &&
+    payload.totalCents !== payload.subtotalCents
+      ? [`Total: ${formatMoney(payload.totalCents, payload.currency)}`]
+      : []),
+    payload.authorizationCode
+      ? `Autorización: ${payload.authorizationCode}`
+      : '',
+    payload.payphoneTransactionId
+      ? `Transacción Payphone: ${payload.payphoneTransactionId}`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');

@@ -21,6 +21,7 @@ export enum OrderPaymentMethodDto {
   EMAIL = 'EMAIL',
   PAYPAL = 'PAYPAL',
   BANK_TRANSFER = 'BANK_TRANSFER',
+  CARD = 'CARD',
 }
 
 export class CreateOrderItemDto {
@@ -108,6 +109,24 @@ export class CapturePayPalOrderDto {
   @IsOptional()
   @IsString()
   sig?: string;
+}
+
+export class ConfirmPayphonePaymentDto {
+  @ApiProperty({
+    description: 'Payphone transaction id from redirect query `id`',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  payphoneId: number;
+
+  @ApiProperty({
+    description: 'clientTransactionId from redirect (maps to Payphone clientTxId)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  clientTransactionId: string;
 }
 
 export class MarketplaceOrderQueryDto {

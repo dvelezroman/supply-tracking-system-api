@@ -228,6 +228,8 @@ Sirve `web/dist/supply-tracking-web` (o la carpeta que genere el build) con ngin
 
 Asegura que `[environment.prod.ts](../../web/src/environments/environment.prod.ts)` apunte a la URL pública de la API (`apiBase`).
 
+Para **Payphone (Cajita de Pagos)**: ver [payphone-setup.md](./payphone-setup.md). En el vhost del front, preferir `add_header Referrer-Policy "origin-when-cross-origin";` (el `index.html` ya incluye meta referrer).
+
 ## 7. Activar RAG (recetas + Mary)
 
 Con `OPENAI_API_KEY` y Chroma ya arriba:
