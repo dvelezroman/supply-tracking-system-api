@@ -213,17 +213,152 @@ Siguen disponibles en checkout híbrido; no requieren `PAYPHONE_*`.
 
 ---
 
-## 7. Seguridad (recordatorio)
+## 7. Kubernetes: `configmap.yaml` y `secrets.yaml`
 
-- **Nunca** commits de `PAYPHONE_TOKEN` en git.
-- Confirmación Payphone **solo en el API** (Bearer no debe ir al browser salvo el token que la propia Cajita exige en el botón; ese token lo entrega el endpoint de checkout tras crear la orden).
-- En producción: HTTPS, dominio registrado, credenciales de **producción** distintas a pruebas.
+En este repo **no** viven los manifests K8s (suelen estar en el chart / carpeta de deploy del cluster). Actualiza los archivos del API que ya inyectan env al Deployment (nombres típicos: `configmap.yaml` + `secrets.yaml`, o un solo Secret con `stringData`).
+
+### 7.1 Qué va dónde
+
+| Variable | Archivo | Motivo |
+|----------|---------|--------|
+| `FRONTEND_URL` | ConfigMap | Público; debe coincidir con Dominio/URL en Payphone Developer |
+| `PAYPHONE_STORE_ID` | ConfigMap | Identificador de tienda (no es el Bearer) |
+| `PAYPHONE_CONFIRM_URL` | ConfigMap | URL pública del Confirm (default abajo) |
+| `PAYPHONE_PAYMENTS_ENABLED` | ConfigMap | Kill-switch (`true` / `false`) |
+| `MARKETPLACE_TAX_RATE_BPS` | ConfigMap | IVA en basis points (`1500` = 15%) |
+| `PAYPHONE_CONFIRM_TIMEOUT_MS` | ConfigMap | Timeout Confirm (ms) |
+| `PAYPHONE_LAT` / `PAYPHONE_LNG` | ConfigMap | Opcional Cajita |
+| `PAYPHONE_TOKEN` | **Secret** | Bearer; **nunca** en ConfigMap ni git |
+| `CONTACT_EMAIL` / SMTP_* | Secret o ConfigMap según ya lo tengan | SMTP pass → Secret |
+
+### 7.2 Ejemplo `configmap.yaml` (fragmento)
+
+Añadir / fusionar bajo `data:` del ConfigMap del API (ajusta `metadata.name` al real del cluster):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: supply-tracking-api-config   # <-- nombre real del ConfigMap
+  namespace: default                   # <-- namespace real
+data:
+  # ... claves existentes (DATABASE_URL host, CHROMA_URL, etc.) ...
+  FRONTEND_URL: "https://www.marea-alta.ec"
+  PAYPHONE_STORE_ID: "TU_STOREID_PRODUCCION"
+  PAYPHONE_CONFIRM_URL: "https://paymentbox.payphonetodoesposible.com/api/confirm"
+  PAYPHONE_PAYMENTS_ENABLED: "true"
+  MARKETPLACE_TAX_RATE_BPS: "1500"
+  PAYPHONE_CONFIRM_TIMEOUT_MS: "15000"
+  PAYPHONE_LAT: "-1.0547"
+  PAYPHONE_LNG: "-80.4545"
+```
+
+Notas:
+
+- `FRONTEND_URL` sin slash final; en Payphone Developer la **URL de respuesta** debe ser  
+  `{FRONTEND_URL}/tienda/pago/resultado`.
+- Staging: usar STOREID/token de **pruebas** y `FRONTEND_URL` del host de staging (y el mismo dominio en la app WEB de Payphone).
+
+### 7.3 Ejemplo `secrets.yaml` (fragmento)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: supply-tracking-api-secrets   # <-- nombre real del Secret
+  namespace: default
+type: Opaque
+stringData:
+  # ... secretos existentes (JWT_SECRET, SMTP_PASS, PAYPAL_CLIENT_SECRET, etc.) ...
+  PAYPHONE_TOKEN: "pega_token_payphone_aqui"
+```
+
+Alternativa sin editar YAML en disco (recomendado en prod):
+
+```bash
+kubectl -n <ns> create secret generic supply-tracking-api-secrets \
+  --from-literal=PAYPHONE_TOKEN='eyJ...' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+O parchear un Secret ya existente:
+
+```bash
+kubectl -n <ns> patch secret supply-tracking-api-secrets \
+  --type merge \
+  -p '{"stringData":{"PAYPHONE_TOKEN":"eyJ..."}}'
+```
+
+### 7.4 Deployment debe mapear las keys
+
+El Pod del API tiene que recibir esas env (vía `envFrom` o `env.valueFrom`). Ejemplo si usan `envFrom`:
+
+```yaml
+# en deployment.yaml del API
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          envFrom:
+            - configMapRef:
+                name: supply-tracking-api-config
+            - secretRef:
+                name: supply-tracking-api-secrets
+```
+
+Si mapean key por key, agregar entradas `PAYPHONE_*` / `MARKETPLACE_TAX_RATE_BPS` igual que `PAYPAL_*` o `SMTP_*`.
+
+### 7.5 Aplicar y reiniciar
+
+```bash
+# Desde la carpeta de manifests del cluster (ruta fuera de este repo):
+kubectl apply -f configmap.yaml
+kubectl apply -f secrets.yaml
+
+# Reiniciar pods del API para tomar env nuevas:
+kubectl -n <ns> rollout restart deployment/<nombre-deployment-api>
+kubectl -n <ns> rollout status deployment/<nombre-deployment-api>
+```
+
+Verificar dentro del pod (sin imprimir el token completo en logs compartidos):
+
+```bash
+kubectl -n <ns> exec deploy/<nombre-deployment-api> -- printenv \
+  | grep -E '^(FRONTEND_URL|PAYPHONE_|MARKETPLACE_TAX)' 
+# Debe listar STORE_ID, CONFIRM_URL, PAYMENTS_ENABLED, TAX_RATE; TOKEN presente (no pegar en tickets).
+```
+
+### 7.6 Post-deploy en la app
+
+1. Admin → Ajustes → activar **Pagos con tarjeta (Payphone)**.
+2. Payphone Developer: Dominio Web + URL de respuesta = front de **ese** ambiente.
+3. Probar checkout tarjeta en ese ambiente.
+
+### 7.7 Checklist K8s
+
+- [ ] ConfigMap: `FRONTEND_URL`, `PAYPHONE_STORE_ID`, flags/tax/confirm URL
+- [ ] Secret: `PAYPHONE_TOKEN` (prod ≠ pruebas)
+- [ ] Deployment referencia ConfigMap + Secret
+- [ ] `kubectl apply` + `rollout restart` del API
+- [ ] Admin `cardPaymentsEnabled` + correo de pedidos/pagos
+- [ ] Payphone Developer alineado al dominio de ese cluster
 
 ---
 
-## 8. Referencias internas
+## 8. Seguridad (recordatorio)
+
+- **Nunca** commits de `PAYPHONE_TOKEN` en git ni en ConfigMap.
+- Confirmación Payphone **solo en el API** (Bearer no debe ir al browser salvo el token que la propia Cajita exige en el botón; ese token lo entrega el endpoint de checkout tras crear la orden).
+- En producción: HTTPS, dominio registrado, credenciales de **producción** distintas a pruebas.
+- Secrets: preferir `kubectl` / sealed-secrets / external-secrets; no dejar `stringData` con token real en repos públicos.
+
+---
+
+## 9. Referencias internas
 
 - Variables plantilla: [`api/.env.example`](../.env.example)
 - Deploy VPS / Referrer: [`api/docs/vps-deploy.md`](./vps-deploy.md)
+- K8s ConfigMap/Secret: sección **7** de este documento
 - Ruta retorno front: `/tienda/pago/resultado`
 - Endpoint confirm API: `POST /api/v0/marketplace/orders/payphone/confirm`
