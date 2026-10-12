@@ -43,16 +43,42 @@ Sin confirmación en 5 min, Payphone **revierte** el cobro automáticamente.
 
 La Cajita **solo funciona en el dominio registrado**. Otro host → error “Acceso denegado”.
 
-### 2.3 Credenciales a copiar
+### 2.3 Credenciales a copiar (Cajita = Token + StoreID)
 
-Tras guardar la app WEB, copia:
+Tras guardar la app tipo **WEB**, ve a la pestaña **Credenciales** (menú superior del Developer).
 
-| Credencial Payphone | Variable en `.env` |
-|---------------------|--------------------|
-| **TOKEN** (Bearer) | `PAYPHONE_TOKEN` |
-| **STOREID** / Store ID | `PAYPHONE_STORE_ID` |
+Ahí deben aparecer explícitamente:
 
-Usa primero el entorno de **pruebas / sandbox** del Developer. En producción cambia TOKEN/STOREID a los de live.
+| Etiqueta en Developer (Cajita / WEB) | Variable en `.env` | Uso en el código |
+|--------------------------------------|--------------------|------------------|
+| **Token** | `PAYPHONE_TOKEN` | `PPaymentButtonBox({ token })` + `Authorization: Bearer` en Confirm |
+| **StoreID** / Store ID | `PAYPHONE_STORE_ID` | `PPaymentButtonBox({ storeId })` |
+
+Guía oficial: [Configuración de ambiente y credenciales](https://docs.payphone.app/configuracion-de-ambiente-y-credenciales).
+
+Usa primero el entorno de **pruebas**. En producción cambia TOKEN/STOREID a los de live.
+
+### 2.3.1 Si ves otras 4 etiquetas (no sirven para Cajita)
+
+En algunas pantallas del Developer aparecen:
+
+| Etiqueta en pantalla | Suele ser | ¿La usa nuestra Cajita? |
+|----------------------|-----------|-------------------------|
+| **Identificador** | ID de aplicación / company | **No** |
+| **Id Cliente** | `client_id` (OAuth / WebView) | **No** |
+| **Clave secreta** | `client_secret` (OAuth / WebView) | **No** |
+| **Contraseña de codificación** | Clave AES (Split / transferTo) | **No** |
+
+Esas 4 son para **WebView / OAuth / Split**, no para Cajita de Pagos.
+
+**Qué hacer:**
+
+1. Confirma que la aplicación es tipo **WEB** (no solo API).
+2. Abre la pestaña **Credenciales** de esa app WEB.
+3. Copia **Token** y **StoreID**.
+4. Si solo ves las 4 etiquetas de arriba y no Token/StoreID → crea o abre una app **WEB** con Dominio + URL de respuesta, o contacta soporte Payphone: sin Token/StoreID la Cajita no autentica.
+
+No pegues Id Cliente / Clave secreta / Contraseña de codificación en `PAYPHONE_TOKEN` / `PAYPHONE_STORE_ID`: el checkout fallará o la Cajita no cargará.
 
 ### 2.4 Entorno de pruebas vs producción
 
@@ -346,7 +372,41 @@ kubectl -n <ns> exec deploy/<nombre-deployment-api> -- printenv \
 
 ---
 
-## 8. Seguridad (recordatorio)
+## 8. ¿Listo para producción?
+
+### Alineación con [Cajita de Pagos](https://docs.payphone.app/cajita-de-pagos)
+
+| Requisito doc | Estado en código |
+|---------------|------------------|
+| CDN v2.0 CSS/JS + `PPaymentButtonBox` | OK |
+| Montos en centavos; `amount = without + with + tax + service + tip` | OK (IVA 15% exclusivo) |
+| `token` + `storeId` en caja | OK vía env |
+| Redirect con `id` + `clientTransactionId` | OK → `/tienda/pago/resultado` |
+| Confirm server-side `POST .../api/confirm` body `{ id, clientTxId }` Bearer | OK (no Confirm desde el browser) |
+| Confirm ≤ 5 min | OK (inmediato al volver) |
+| `clientTransactionId` ≤ 50 | OK |
+| App tipo WEB + Dominio + URL respuesta | Operativo (Payphone Developer) |
+| Referrer-Policy origin / origin-when-cross-origin | Meta en `index.html` (+ nginx recomendado) |
+
+### Checklist go-live (después de envs)
+
+Código listo para cobrar **si** completas esto:
+
+1. App Developer tipo **WEB**, ambiente **producción** cuando toque cobros reales.
+2. `PAYPHONE_TOKEN` + `PAYPHONE_STORE_ID` reales (pestaña Credenciales).
+3. `FRONTEND_URL` = dominio público HTTPS.
+4. URL respuesta Payphone = `{FRONTEND_URL}/tienda/pago/resultado`.
+5. Dominio Web en Payphone = mismo host del front.
+6. ConfigMap/Secret aplicados + rollout del API.
+7. Admin: **Pagos con tarjeta** ON + correo de pedidos/pagos.
+8. SMTP (o al menos `CONTACT_EMAIL`) para avisos.
+9. Probar 1 cobro real pequeño y ver Ventas en Payphone Business.
+
+Sin Token/StoreID correctos, **no** basta con poner las 4 credenciales de Id Cliente / Clave secreta.
+
+---
+
+## 9. Seguridad (recordatorio)
 
 - **Nunca** commits de `PAYPHONE_TOKEN` en git ni en ConfigMap.
 - Confirmación Payphone **solo en el API** (Bearer no debe ir al browser salvo el token que la propia Cajita exige en el botón; ese token lo entrega el endpoint de checkout tras crear la orden).
@@ -355,7 +415,7 @@ kubectl -n <ns> exec deploy/<nombre-deployment-api> -- printenv \
 
 ---
 
-## 9. Referencias internas
+## 10. Referencias internas
 
 - Variables plantilla: [`api/.env.example`](../.env.example)
 - Deploy VPS / Referrer: [`api/docs/vps-deploy.md`](./vps-deploy.md)
