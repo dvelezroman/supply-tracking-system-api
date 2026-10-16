@@ -144,6 +144,35 @@ export function buildMarketplaceOrderReceivedCustomerCopy(args: {
   };
 }
 
+export function buildMarketplaceOrderCancelledCustomerCopy(args: {
+  customerName: string;
+  orderNumber: string;
+  subtotalCents: number;
+  currency?: string;
+  confirmationUrl?: string | null;
+  wasPaid?: boolean;
+}): WhatsappTemplateCopy {
+  const ext = args.wasPaid
+    ? `#${shortOrderId(args.orderNumber)} cancelado. Contactaremos si hubo pago.`
+    : args.confirmationUrl
+      ? `#${shortOrderId(args.orderNumber)} cancelado. ${args.confirmationUrl}`
+      : `#${shortOrderId(args.orderNumber)} · ${moneyUsd(args.subtotalCents, args.currency)} cancelado.`;
+  return {
+    contact: truncateTemplateParam(
+      args.customerName.trim().split(/\s+/)[0] || args.customerName || 'Cliente',
+      40,
+    ),
+    contentMessage: truncateTemplateParam(
+      `Pedido cancelado #${shortOrderId(args.orderNumber)}.`,
+      WHATSAPP_CONTENT_MESSAGE_MAX_LENGTH,
+    ),
+    contentMessageExt: truncateTemplateParam(
+      ext,
+      WHATSAPP_CONTENT_MESSAGE_EXT_MAX_LENGTH,
+    ),
+  };
+}
+
 export function buildMarketplacePaymentApprovedCustomerCopy(args: {
   customerName: string;
   orderNumber: string;

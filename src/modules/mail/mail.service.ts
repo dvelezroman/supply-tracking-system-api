@@ -4,6 +4,10 @@ import * as nodemailer from 'nodemailer';
 import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import type { OrderEmailBase } from './order-email.util';
 import {
+  buildCustomerOrderCancelledEmail,
+  type CustomerOrderCancelledEmailPayload,
+} from './templates/marketplace-order-cancelled.template';
+import {
   buildCustomerOrderEmail,
   type CustomerOrderEmailPayload,
 } from './templates/marketplace-order-customer.template';
@@ -70,6 +74,19 @@ export class MailService {
     payload: CustomerOrderEmailPayload & { to: string },
   ): Promise<void> {
     const { html, text, subject } = buildCustomerOrderEmail(payload);
+    await this.sendHtml({
+      to: payload.to,
+      subject,
+      html,
+      text,
+      fromName: payload.fromName,
+    });
+  }
+
+  async sendMarketplaceOrderCancelledToCustomer(
+    payload: CustomerOrderCancelledEmailPayload & { to: string },
+  ): Promise<void> {
+    const { html, text, subject } = buildCustomerOrderCancelledEmail(payload);
     await this.sendHtml({
       to: payload.to,
       subject,

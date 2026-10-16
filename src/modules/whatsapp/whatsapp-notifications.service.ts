@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { BankTransferEmailDetails } from '../mail/order-email.util';
 import {
   buildCustomCopy,
+  buildMarketplaceOrderCancelledCustomerCopy,
   buildMarketplaceOrderReceivedCustomerCopy,
   buildMarketplacePaymentApprovedCustomerCopy,
   buildMarketplacePendingAdminCopy,
@@ -210,6 +211,40 @@ export class WhatsappNotificationsService {
     });
   }
 
+  async notifyCustomerOrderCancelled(
+    order: MarketplaceOrderNotifyInput,
+    opts?: {
+      confirmationUrl?: string | null;
+      wasPaid?: boolean;
+      force?: boolean;
+      actorUserId?: string | null;
+      source?: WhatsappNotificationSource;
+    },
+  ): Promise<WhatsappSendStatus> {
+    if (order.notifyWhatsapp === false) {
+      return 'skipped_notify_disabled';
+    }
+    return this.dispatch({
+      occasion: WhatsappOccasion.MARKETPLACE_ORDER_CANCELLED_CUSTOMER,
+      occasionKey: `marketplace-cancelled-customer:${order.id}`,
+      recipientKey: `customer:${order.id}`,
+      recipientLabel: order.customerName,
+      phone: order.customerPhone,
+      marketplaceOrderId: order.id,
+      force: opts?.force,
+      actorUserId: opts?.actorUserId,
+      source: opts?.source,
+      copy: buildMarketplaceOrderCancelledCustomerCopy({
+        customerName: order.customerName,
+        orderNumber: order.orderNumber,
+        subtotalCents: order.subtotalCents,
+        currency: order.currency,
+        confirmationUrl: opts?.confirmationUrl,
+        wasPaid: opts?.wasPaid,
+      }),
+    });
+  }
+
   async notifyCustomerPaymentApproved(
     order: MarketplaceOrderNotifyInput,
     opts?: {
@@ -286,6 +321,13 @@ export class WhatsappNotificationsService {
       args.occasion === WhatsappOccasion.MARKETPLACE_PAYMENT_APPROVED_CUSTOMER
     ) {
       return this.notifyCustomerPaymentApproved(input, common);
+    }
+    if (args.occasion === WhatsappOccasion.MARKETPLACE_ORDER_CANCELLED_CUSTOMER) {
+      return this.notifyCustomerOrderCancelled(input, {
+        ...common,
+        confirmationUrl: args.confirmationUrl,
+        wasPaid: !!order.paidAt,
+      });
     }
 
     return this.dispatch({

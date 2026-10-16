@@ -1343,10 +1343,89 @@ export class MarketplaceService implements OnModuleInit {
     if (order.status === MarketplaceOrderStatus.CANCELLED) {
       throw new BadRequestException('Order already cancelled');
     }
-    if (this.orderRequiresRestockOnCancel(order)) {
-      return this.repo.restockOrderItems(id);
+    const wasPaid = this.orderRequiresRestockOnCancel(order);
+    const cancelled = wasPaid
+      ? await this.repo.restockOrderItems(id)
+      : await this.repo.cancelOrderSoft(id);
+    if (!cancelled) {
+      throw new NotFoundException('Order not found');
     }
-    return this.repo.cancelOrderSoft(id);
+    await this.notifyOrderCancelled(cancelled, wasPaid);
+    return cancelled;
+  }
+
+  private async notifyOrderCancelled(
+    order: Awaited<ReturnType<typeof this.repo.findOrderById>>,
+    wasPaid: boolean,
+  ): Promise<void> {
+    if (!order) return;
+
+    const settings = await this.repo.getSettings();
+    const frontendBase = (
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
+    ).replace(/\/$/, '');
+    const orderConfirmationUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`;
+
+    const emailPayload = {
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      customerEmail: order.customerEmail,
+      customerPhone: order.customerPhone,
+      customerAddress: order.customerAddress,
+      notes: order.notes,
+      subtotalCents: order.subtotalCents,
+      listSubtotalCents: order.listSubtotalCents,
+      discountTotalCents: order.discountTotalCents,
+      taxCents: order.taxCents ?? 0,
+      totalCents: order.totalCents ?? order.subtotalCents,
+      currency: order.currency,
+      paymentMethod: order.paymentMethod,
+      fromName: settings.fromName,
+      orderConfirmationUrl,
+      wasPaid,
+      items: order.items.map((i) => ({
+        name: i.name,
+        sku: i.sku,
+        qty: i.qty,
+        listUnitPriceCents: i.listUnitPriceCents,
+        discountPercent: i.discountPercent,
+        promoDiscountPercent: i.promoDiscountPercent,
+        unitPriceCents: i.unitPriceCents,
+      })),
+    };
+
+    try {
+      await this.mail.sendMarketplaceOrderCancelledToCustomer({
+        ...emailPayload,
+        to: order.customerEmail.trim(),
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Cancellation email failed for ${order.orderNumber}: ${reason}`,
+      );
+    }
+
+    try {
+      await this.whatsapp.notifyCustomerOrderCancelled(
+        {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          subtotalCents: order.subtotalCents,
+          currency: order.currency,
+          paymentMethod: order.paymentMethod,
+          notifyWhatsapp: order.notifyWhatsapp,
+        },
+        { confirmationUrl: orderConfirmationUrl, wasPaid },
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Cancellation WhatsApp failed for ${order.orderNumber}: ${reason}`,
+      );
+    }
   }
 
   /** Restock only when stock was actually decremented for this order. */
