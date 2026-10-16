@@ -532,6 +532,27 @@ export class MarketplaceRepository {
     });
   }
 
+  /**
+   * Hard-delete a CARD order that never completed payment (cascade payments/items).
+   * Only AWAITING_PAYMENT or PAYMENT_FAILED + CARD.
+   */
+  async deleteUnpaidCardOrder(orderId: string): Promise<boolean> {
+    const order = await this.prisma.marketplaceOrder.findUnique({
+      where: { id: orderId },
+      select: { id: true, paymentMethod: true, status: true },
+    });
+    if (!order) return false;
+    if (order.paymentMethod !== MarketplacePaymentMethod.CARD) return false;
+    if (
+      order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT &&
+      order.status !== MarketplaceOrderStatus.PAYMENT_FAILED
+    ) {
+      return false;
+    }
+    await this.prisma.marketplaceOrder.delete({ where: { id: orderId } });
+    return true;
+  }
+
   findOrderById(id: string) {
     return this.prisma.marketplaceOrder.findUnique({
       where: { id },

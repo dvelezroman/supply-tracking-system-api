@@ -675,21 +675,54 @@ export class MarketplaceService implements OnModuleInit {
       phoneNumber: order.customerPhone ?? undefined,
     });
 
-    const frontendBase = (
-      this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
-    ).replace(/\/$/, '');
-    await this.notifyOrderWhatsapp({
-      order,
-      settings,
-      phase: 'awaiting',
-      confirmationUrl: `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`,
-    });
-
+    // No WhatsApp/email until payment confirmed — unpaid CARD drafts are discarded on cancel/fail.
     return {
       ...order,
       clientTransactionId,
       payment: box,
     };
+  }
+
+  /**
+   * Discard unpaid CARD checkout (cajita closed / SDK fail / user picks another method).
+   * Hard-deletes so the order is not left registered.
+   */
+  async abandonCardCheckout(orderNumber: string) {
+    const order = await this.repo.findOrderByNumber(orderNumber);
+    if (!order) {
+      return { abandoned: true, orderNumber };
+    }
+    if (order.paymentMethod !== MarketplacePaymentMethod.CARD) {
+      throw new BadRequestException('Only CARD checkouts can be abandoned');
+    }
+    if (
+      order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT &&
+      order.status !== MarketplaceOrderStatus.PAYMENT_FAILED
+    ) {
+      throw new BadRequestException('Order can no longer be abandoned');
+    }
+    await this.repo.deleteUnpaidCardOrder(order.id);
+    this.logger.log(`Abandoned unpaid CARD order ${orderNumber}`);
+    return { abandoned: true, orderNumber };
+  }
+
+  private async discardUnpaidCardOrder(
+    orderId: string,
+    orderNumber: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      await this.repo.deleteUnpaidCardOrder(orderId);
+      this.logger.log(
+        `Discarded unpaid CARD order ${orderNumber}: ${reason}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to discard CARD order ${orderNumber}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   async confirmCardPayment(dto: ConfirmPayphonePaymentDto) {
@@ -735,32 +768,14 @@ export class MarketplaceService implements OnModuleInit {
         confirm.message ||
         confirm.transactionStatus ||
         `Payphone statusCode ${confirm.statusCode ?? 'unknown'}`;
-      if (paymentRow) {
-        await this.repo.updatePayment(paymentRow.id, {
-          status: 'FAILED',
-          payphoneId: dto.payphoneId,
-          rawResponse: confirm as unknown as Prisma.InputJsonValue,
-        });
-      }
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: reason,
-      });
-
-      const settings = await this.repo.getSettings();
-      try {
-        await this.sendPaymentFailedAdminNotice(order, settings, reason);
-      } catch (mailErr) {
-        this.logger.warn(
-          `Payment-failed admin email skipped for ${order.orderNumber}: ${
-            mailErr instanceof Error ? mailErr.message : String(mailErr)
-          }`,
-        );
-      }
-
+      await this.discardUnpaidCardOrder(order.id, order.orderNumber, reason);
       throw new BadRequestException({
         message: 'Payment was not approved',
-        details: { transactionStatus: confirm.transactionStatus, reason },
+        details: {
+          transactionStatus: confirm.transactionStatus,
+          reason,
+          chooseAnotherPaymentMethod: true,
+        },
       });
     }
 
@@ -773,39 +788,37 @@ export class MarketplaceService implements OnModuleInit {
       this.logger.warn(
         `Payphone amount mismatch for ${order.orderNumber}: expected ${expectedAmount}, got ${confirm.amount}`,
       );
-      if (paymentRow) {
-        await this.repo.updatePayment(paymentRow.id, {
-          status: 'FAILED',
-          payphoneId: dto.payphoneId,
-          rawResponse: confirm as unknown as Prisma.InputJsonValue,
-        });
-      }
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: `Amount mismatch: expected ${expectedAmount}, got ${confirm.amount}`,
+      await this.discardUnpaidCardOrder(
+        order.id,
+        order.orderNumber,
+        `Amount mismatch: expected ${expectedAmount}, got ${confirm.amount}`,
+      );
+      throw new BadRequestException({
+        message: 'Payment amount mismatch',
+        details: { chooseAnotherPaymentMethod: true },
       });
-      throw new BadRequestException('Payment amount mismatch');
     }
 
     if (
       confirm.currency &&
       confirm.currency.toUpperCase() !== order.currency.toUpperCase()
     ) {
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: `Currency mismatch: ${confirm.currency}`,
+      await this.discardUnpaidCardOrder(
+        order.id,
+        order.orderNumber,
+        `Currency mismatch: ${confirm.currency}`,
+      );
+      throw new BadRequestException({
+        message: 'Payment currency mismatch',
+        details: { chooseAnotherPaymentMethod: true },
       });
-      throw new BadRequestException('Payment currency mismatch');
     }
 
     try {
       await this.repo.decrementStockForOrder(order.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: msg,
-      });
+      await this.discardUnpaidCardOrder(order.id, order.orderNumber, msg);
       this.rethrowOrderPlacementError(err);
     }
 

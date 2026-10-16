@@ -50,6 +50,15 @@ export class MarketplaceOrdersPublicController {
     return this.marketplace.confirmCardPayment(dto);
   }
 
+  @Post(':orderNumber/payphone/abandon')
+  @ApiOperation({
+    summary:
+      'Discard unpaid CARD checkout (cajita closed / failed) so no order stays registered',
+  })
+  abandonPayphone(@Param('orderNumber') orderNumber: string) {
+    return this.marketplace.abandonCardCheckout(orderNumber);
+  }
+
   @Post(':orderNumber/paypal/capture')
   @ApiOperation({ summary: 'Capture PayPal payment after buyer return' })
   capturePayPal(
