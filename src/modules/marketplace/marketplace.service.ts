@@ -693,7 +693,7 @@ export class MarketplaceService implements OnModuleInit {
 
   /**
    * Discard unpaid CARD checkout (cajita closed / SDK fail / user picks another method).
-   * Hard-deletes so the order is not left registered.
+   * Marks CANCELLED so admins can still see the order.
    */
   async abandonCardCheckout(orderNumber: string) {
     const order = await this.repo.findOrderByNumber(orderNumber);
@@ -709,9 +709,11 @@ export class MarketplaceService implements OnModuleInit {
     ) {
       throw new BadRequestException('Order can no longer be abandoned');
     }
-    await this.repo.deleteUnpaidCardOrder(order.id);
-    this.logger.log(`Abandoned unpaid CARD order ${orderNumber}`);
-    return { abandoned: true, orderNumber };
+    await this.repo.cancelOrderSoft(order.id, {
+      paymentError: 'Checkout abandoned by customer',
+    });
+    this.logger.log(`Cancelled unpaid CARD order ${orderNumber} (checkout abandoned)`);
+    return { abandoned: true, orderNumber, status: MarketplaceOrderStatus.CANCELLED };
   }
 
   private async discardUnpaidCardOrder(
@@ -720,13 +722,13 @@ export class MarketplaceService implements OnModuleInit {
     reason: string,
   ): Promise<void> {
     try {
-      await this.repo.deleteUnpaidCardOrder(orderId);
+      await this.repo.cancelOrderSoft(orderId, { paymentError: reason });
       this.logger.log(
-        `Discarded unpaid CARD order ${orderNumber}: ${reason}`,
+        `Cancelled unpaid CARD order ${orderNumber}: ${reason}`,
       );
     } catch (err) {
       this.logger.error(
-        `Failed to discard CARD order ${orderNumber}: ${
+        `Failed to cancel CARD order ${orderNumber}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -1341,13 +1343,28 @@ export class MarketplaceService implements OnModuleInit {
     if (order.status === MarketplaceOrderStatus.CANCELLED) {
       throw new BadRequestException('Order already cancelled');
     }
-    if (order.status === MarketplaceOrderStatus.AWAITING_PAYMENT) {
-      return this.repo.cancelAwaitingPayment(id);
+    if (this.orderRequiresRestockOnCancel(order)) {
+      return this.repo.restockOrderItems(id);
     }
-    if (order.status === MarketplaceOrderStatus.PAYMENT_FAILED) {
-      return this.repo.cancelAwaitingPayment(id);
+    return this.repo.cancelOrderSoft(id);
+  }
+
+  /** Restock only when stock was actually decremented for this order. */
+  private orderRequiresRestockOnCancel(order: {
+    status: MarketplaceOrderStatus;
+    paidAt: Date | null;
+    paymentMethod: MarketplacePaymentMethod;
+  }): boolean {
+    if (order.paidAt) return true;
+    if (order.status === MarketplaceOrderStatus.PAID) return true;
+    // Legacy email checkout reserved stock at placement (PENDING, no paidAt).
+    if (
+      order.status === MarketplaceOrderStatus.PENDING &&
+      order.paymentMethod === MarketplacePaymentMethod.EMAIL
+    ) {
+      return true;
     }
-    return this.repo.restockOrderItems(id);
+    return false;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

@@ -524,33 +524,27 @@ export class MarketplaceRepository {
     });
   }
 
-  async cancelAwaitingPayment(orderId: string) {
+  /** Soft-cancel order (keeps row + line items for admin history). */
+  async cancelOrderSoft(
+    orderId: string,
+    opts?: { paymentError?: string | null },
+  ) {
+    const data: Prisma.MarketplaceOrderUpdateInput = {
+      status: MarketplaceOrderStatus.CANCELLED,
+    };
+    if (opts && 'paymentError' in opts) {
+      data.paymentError = opts.paymentError;
+    }
     return this.prisma.marketplaceOrder.update({
       where: { id: orderId },
-      data: { status: MarketplaceOrderStatus.CANCELLED },
+      data,
       include: { items: true },
     });
   }
 
-  /**
-   * Hard-delete a CARD order that never completed payment (cascade payments/items).
-   * Only AWAITING_PAYMENT or PAYMENT_FAILED + CARD.
-   */
-  async deleteUnpaidCardOrder(orderId: string): Promise<boolean> {
-    const order = await this.prisma.marketplaceOrder.findUnique({
-      where: { id: orderId },
-      select: { id: true, paymentMethod: true, status: true },
-    });
-    if (!order) return false;
-    if (order.paymentMethod !== MarketplacePaymentMethod.CARD) return false;
-    if (
-      order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT &&
-      order.status !== MarketplaceOrderStatus.PAYMENT_FAILED
-    ) {
-      return false;
-    }
-    await this.prisma.marketplaceOrder.delete({ where: { id: orderId } });
-    return true;
+  /** @deprecated Use cancelOrderSoft */
+  async cancelAwaitingPayment(orderId: string) {
+    return this.cancelOrderSoft(orderId);
   }
 
   findOrderById(id: string) {

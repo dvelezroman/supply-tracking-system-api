@@ -53,7 +53,7 @@ export class MarketplaceOrdersPublicController {
   @Post(':orderNumber/payphone/abandon')
   @ApiOperation({
     summary:
-      'Discard unpaid CARD checkout (cajita closed / failed) so no order stays registered',
+      'Cancel unpaid CARD checkout (cajita closed / failed); order stays visible to admin as CANCELLED',
   })
   abandonPayphone(@Param('orderNumber') orderNumber: string) {
     return this.marketplace.abandonCardCheckout(orderNumber);
