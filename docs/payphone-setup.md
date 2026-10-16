@@ -214,7 +214,8 @@ La opción de tarjeta en checkout solo aparece si:
 
 | Caso | Resultado esperado |
 |------|--------------------|
-| Cerrar modal / Cajita no procede / pago rechazado | **No** queda orden registrada (borrador CARD se descarta); mensaje: elija otra forma de pago; stock intacto |
+| Cerrar modal / Cajita no procede / pago rechazado | **No** queda orden; **sin** email/WhatsApp; mensaje: elija otra forma de pago; stock intacto |
+| Notificaciones | Payphone/PayPal: **solo** tras pago confirmado (email admin+cliente + WhatsApp cliente). Email/transferencia: al crear pedido (instrucciones + aviso admin) |
 | Cajita > ~10 min | Formulario expira; cerrar/reintentar o elegir otro método (sin orden) |
 | Confirm fallido | API descarta borrador CARD; redirect a checkout con `payphoneFailed=1` |
 | TOKEN/STORE mal | No aparece tarjeta, o error al iniciar / confirmar |

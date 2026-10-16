@@ -469,6 +469,20 @@ export class MarketplaceService implements OnModuleInit {
   }
 
   // ─── Orders ───────────────────────────────────────────────────────────────
+  //
+  // Notification policy:
+  // - EMAIL / BANK_TRANSFER: notify customer + admin on place (how to pay / review).
+  // - PAYPAL / CARD (Payphone): notify only after payment is confirmed.
+  //
+
+  private isOnlinePaymentMethod(
+    method: MarketplacePaymentMethod | string | null | undefined,
+  ): boolean {
+    return (
+      method === MarketplacePaymentMethod.CARD ||
+      method === MarketplacePaymentMethod.PAYPAL
+    );
+  }
 
   async placeOrder(dto: CreateMarketplaceOrderDto) {
     const method = dto.paymentMethod ?? OrderPaymentMethodDto.EMAIL;
@@ -598,13 +612,7 @@ export class MarketplaceService implements OnModuleInit {
       const updated = await this.repo.updateOrder(order.id, {
         paypalOrderId: created.paypalOrderId,
       });
-      const confirmationUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}`;
-      await this.notifyOrderWhatsapp({
-        order: updated,
-        settings,
-        phase: 'awaiting',
-        confirmationUrl,
-      });
+      // No email/WhatsApp until PayPal capture completes (same rule as CARD).
       return {
         ...updated,
         approveUrl: created.approveUrl,
@@ -863,78 +871,6 @@ export class MarketplaceService implements OnModuleInit {
     };
   }
 
-  private async sendPaymentFailedAdminNotice(
-    order: {
-      orderNumber: string;
-      customerName: string;
-      customerEmail: string;
-      customerPhone: string | null;
-      customerAddress: string | null;
-      notes: string | null;
-      subtotalCents: number;
-      listSubtotalCents: number;
-      discountTotalCents: number;
-      taxCents?: number;
-      totalCents?: number;
-      currency: string;
-      paymentMethod?: MarketplacePaymentMethod | string;
-      items: Array<{
-        name: string;
-        sku: string;
-        qty: number;
-        listUnitPriceCents: number;
-        discountPercent: number;
-        promoDiscountPercent: number;
-        unitPriceCents: number;
-      }>;
-    },
-    settings: {
-      orderNotificationEmail: string | null;
-      fromName: string | null;
-      bankTransferEnabled: boolean;
-      bankName: string | null;
-      bankAccountType: string | null;
-      bankAccountNumber: string | null;
-      bankBeneficiaryName: string | null;
-      bankBeneficiaryRuc: string | null;
-      bankContactEmail: string | null;
-    },
-    reason: string,
-  ) {
-    const to = this.resolveOrderNotificationTo(settings);
-    if (!to) return;
-    await this.mail.sendMarketplaceOrderToStore({
-      orderNumber: order.orderNumber,
-      customerName: order.customerName,
-      customerEmail: order.customerEmail,
-      customerPhone: order.customerPhone,
-      customerAddress: order.customerAddress,
-      notes: order.notes
-        ? `${order.notes}\n\n[Pago fallido] ${reason}`
-        : `[Pago fallido] ${reason}`,
-      subtotalCents: order.subtotalCents,
-      listSubtotalCents: order.listSubtotalCents,
-      discountTotalCents: order.discountTotalCents,
-      taxCents: order.taxCents ?? 0,
-      totalCents: order.totalCents ?? order.subtotalCents,
-      currency: order.currency,
-      paymentMethod: order.paymentMethod ?? MarketplacePaymentMethod.CARD,
-      paymentConfirmed: false,
-      emailKind: 'PAYMENT_FAILED',
-      items: order.items.map((i) => ({
-        name: i.name,
-        sku: i.sku,
-        qty: i.qty,
-        listUnitPriceCents: i.listUnitPriceCents,
-        discountPercent: i.discountPercent,
-        promoDiscountPercent: i.promoDiscountPercent,
-        unitPriceCents: i.unitPriceCents,
-      })),
-      fromName: settings.fromName,
-      to,
-    });
-  }
-
   private resolveOrderNotificationTo(settings: {
     orderNotificationEmail: string | null;
   }): string {
@@ -1127,6 +1063,15 @@ export class MarketplaceService implements OnModuleInit {
     successStatus: MarketplaceOrderStatus = MarketplaceOrderStatus.EMAILED,
     paymentConfirmed = false,
   ) {
+    // PayPal / Payphone: never email or WhatsApp until payment confirmed.
+    if (this.isOnlinePaymentMethod(order.paymentMethod) && !paymentConfirmed) {
+      this.logger.warn(
+        `Skipping email/WhatsApp for unpaid online order ${order.orderNumber} (${order.paymentMethod})`,
+      );
+      const existing = await this.repo.findOrderById(order.id);
+      return existing ?? (order as Awaited<ReturnType<typeof this.repo.updateOrder>>);
+    }
+
     const to = this.resolveOrderNotificationTo(settings);
 
     if (!to) {
@@ -1149,10 +1094,9 @@ export class MarketplaceService implements OnModuleInit {
         ? this.bankTransferDetailsFromSettings(settings)
         : null;
 
-    const emailKind =
-      paymentConfirmed || order.paymentMethod === MarketplacePaymentMethod.CARD
-        ? ('ORDER_PAID' as const)
-        : ('ORDER_REQUEST' as const);
+    const emailKind = paymentConfirmed
+      ? ('ORDER_PAID' as const)
+      : ('ORDER_REQUEST' as const);
 
     const emailBase = {
       orderNumber: order.orderNumber,
@@ -1169,7 +1113,7 @@ export class MarketplaceService implements OnModuleInit {
       currency: order.currency,
       paymentMethod: order.paymentMethod,
       paymentConfirmed,
-      emailKind: paymentConfirmed ? emailKind : ('ORDER_REQUEST' as const),
+      emailKind,
       authorizationCode: order.authorizationCode ?? undefined,
       payphoneTransactionId: order.payphoneTransactionId ?? undefined,
       bankTransfer,
@@ -1266,8 +1210,17 @@ export class MarketplaceService implements OnModuleInit {
       notifyWhatsapp: args.order.notifyWhatsapp !== false,
     };
 
+    // PayPal / Payphone: no "pedido en proceso" WhatsApp until paid.
+    if (
+      this.isOnlinePaymentMethod(args.order.paymentMethod) &&
+      args.phase !== 'paid'
+    ) {
+      return;
+    }
+
     try {
       if (args.phase === 'awaiting') {
+        // EMAIL / BANK_TRANSFER only: admin + customer how-to-proceed.
         await this.whatsapp.notifyMarketplacePendingAdmins(notifyInput);
         const bankTransfer =
           args.order.paymentMethod === MarketplacePaymentMethod.BANK_TRANSFER
@@ -1280,6 +1233,8 @@ export class MarketplaceService implements OnModuleInit {
         return;
       }
 
+      // Paid (PayPal / Payphone / offline confirm): customer paid notice.
+      // Admin already got store email (ORDER_PAID) from sendOrderEmails.
       await this.whatsapp.notifyCustomerPaymentApproved(notifyInput);
     } catch (err) {
       this.logger.error(
