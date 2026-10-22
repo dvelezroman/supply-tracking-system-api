@@ -111,6 +111,14 @@ export class CapturePayPalOrderDto {
   sig?: string;
 }
 
+export class AbandonPayphoneCheckoutDto {
+  @ApiProperty({ description: 'Payphone clientTransactionId from Cajita config' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  clientTransactionId!: string;
+}
+
 export class ConfirmPayphonePaymentDto {
   @ApiProperty({
     description: 'Payphone transaction id from redirect query `id`',

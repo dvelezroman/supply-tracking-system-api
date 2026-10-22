@@ -298,6 +298,33 @@ model MarketplacePayment {
   @@map("marketplace_payments")
 }
 
+/// Pre-payment online checkout (PayPal / CARD). Marketplace order is created only after successful payment.
+model MarketplaceOnlineCheckoutSession {
+  id                  String                   @id @default(uuid())
+  paymentMethod       MarketplacePaymentMethod
+  /// Number used in PayPal return URL / Payphone reference until the order row exists.
+  plannedOrderNumber  String                   @unique
+  clientTransactionId String?                  @unique
+  paypalOrderId       String?                  @unique
+  customerName        String
+  customerEmail       String
+  customerPhone       String?
+  customerAddress     String?
+  notes               String?
+  notifyWhatsapp      Boolean                  @default(true)
+  currency            String                   @default("USD")
+  subtotalCents       Int
+  listSubtotalCents   Int                      @default(0)
+  discountTotalCents  Int                      @default(0)
+  taxCents            Int                      @default(0)
+  totalCents          Int                      @default(0)
+  lines               Json
+  createdAt           DateTime                 @default(now())
+
+  @@index([createdAt])
+  @@map("marketplace_online_checkout_sessions")
+}
+
 model MarketplaceOrderItem {
   id             String  @id @default(uuid())
   orderId        String

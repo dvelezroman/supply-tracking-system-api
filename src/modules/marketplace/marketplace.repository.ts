@@ -10,6 +10,18 @@ import {
   effectiveUnitPriceCents,
 } from './marketplace-pricing.util';
 
+export type MarketplaceCheckoutLineSnapshot = {
+  productId: string;
+  name: string;
+  sku: string;
+  listUnitPriceCents: number;
+  discountPercent: number;
+  promoDiscountPercent: number;
+  unitPriceCents: number;
+  qty: number;
+  imageUrl?: string | null;
+};
+
 const productInclude = {
   images: { orderBy: [{ isPrimary: 'desc' as const }, { sortOrder: 'asc' as const }] },
   traceProduct: { select: { id: true, sku: true, name: true } },
@@ -500,6 +512,53 @@ export class MarketplaceRepository {
     });
   }
 
+  /** New Payphone attempt on same unpaid CARD order (new clientTransactionId). */
+  async prepareCardPaymentRetry(args: {
+    orderId: string;
+    payphoneClientTxId: string;
+    taxCents: number;
+    totalCents: number;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.marketplaceOrder.findUnique({
+        where: { id: args.orderId },
+      });
+      if (!order) throw new Error('ORDER_NOT_FOUND');
+
+      await tx.marketplacePayment.updateMany({
+        where: { orderId: args.orderId, status: 'INITIATED' },
+        data: { status: 'FAILED' },
+      });
+
+      await tx.marketplaceOrder.update({
+        where: { id: args.orderId },
+        data: {
+          status: MarketplaceOrderStatus.AWAITING_PAYMENT,
+          paymentError: null,
+          payphoneClientTxId: args.payphoneClientTxId,
+          taxCents: args.taxCents,
+          totalCents: args.totalCents,
+        },
+      });
+
+      await tx.marketplacePayment.create({
+        data: {
+          orderId: args.orderId,
+          clientTransactionId: args.payphoneClientTxId,
+          status: 'INITIATED',
+          amountCents: args.totalCents,
+          taxCents: args.taxCents,
+          currency: order.currency,
+        },
+      });
+
+      return tx.marketplaceOrder.findUnique({
+        where: { id: args.orderId },
+        include: { items: true },
+      });
+    });
+  }
+
   findPaymentByClientTxId(clientTransactionId: string) {
     return this.prisma.marketplacePayment.findUnique({
       where: { clientTransactionId },
@@ -607,5 +666,195 @@ export class MarketplaceRepository {
     });
 
     return this.findOrderById(orderId);
+  }
+
+  async createOnlineCheckoutSession(args: {
+    paymentMethod: MarketplacePaymentMethod;
+    plannedOrderNumber: string;
+    clientTransactionId?: string;
+    customerName: string;
+    customerEmail: string;
+    customerPhone?: string;
+    customerAddress?: string;
+    notes?: string;
+    notifyWhatsapp?: boolean;
+    taxCents?: number;
+    totalCents?: number;
+    computeTax?: (subtotalCents: number) => {
+      taxCents: number;
+      totalCents: number;
+    };
+    lines: Array<{ productId: string; qty: number }>;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const { resolved, subtotalCents, listSubtotalCents, orderCurrency } =
+        await this.resolveLines(tx, args.lines, { decrementStock: false });
+
+      const computed = args.computeTax?.(subtotalCents);
+      const taxCents = computed?.taxCents ?? args.taxCents ?? 0;
+      const totalCents = computed?.totalCents ?? args.totalCents ?? subtotalCents;
+
+      return tx.marketplaceOnlineCheckoutSession.create({
+        data: {
+          paymentMethod: args.paymentMethod,
+          plannedOrderNumber: args.plannedOrderNumber,
+          clientTransactionId: args.clientTransactionId,
+          customerName: args.customerName,
+          customerEmail: args.customerEmail,
+          customerPhone: args.customerPhone,
+          customerAddress: args.customerAddress,
+          notes: args.notes,
+          notifyWhatsapp: args.notifyWhatsapp ?? true,
+          currency: orderCurrency,
+          subtotalCents,
+          listSubtotalCents,
+          discountTotalCents: Math.max(0, listSubtotalCents - subtotalCents),
+          taxCents,
+          totalCents,
+          lines: resolved as unknown as Prisma.InputJsonValue,
+        },
+      });
+    });
+  }
+
+  findOnlineCheckoutSessionByPlannedOrderNumber(plannedOrderNumber: string) {
+    return this.prisma.marketplaceOnlineCheckoutSession.findUnique({
+      where: { plannedOrderNumber },
+    });
+  }
+
+  findOnlineCheckoutSessionByClientTxId(clientTransactionId: string) {
+    return this.prisma.marketplaceOnlineCheckoutSession.findUnique({
+      where: { clientTransactionId },
+    });
+  }
+
+  findOnlineCheckoutSessionByPaypalOrderId(paypalOrderId: string) {
+    return this.prisma.marketplaceOnlineCheckoutSession.findUnique({
+      where: { paypalOrderId },
+    });
+  }
+
+  updateOnlineCheckoutSessionPaypalOrderId(id: string, paypalOrderId: string) {
+    return this.prisma.marketplaceOnlineCheckoutSession.update({
+      where: { id },
+      data: { paypalOrderId },
+    });
+  }
+
+  deleteOnlineCheckoutSession(id: string) {
+    return this.prisma.marketplaceOnlineCheckoutSession.delete({
+      where: { id },
+    });
+  }
+
+  deleteOnlineCheckoutSessionByClientTxId(clientTransactionId: string) {
+    return this.prisma.marketplaceOnlineCheckoutSession.deleteMany({
+      where: { clientTransactionId },
+    });
+  }
+
+  async finalizeOnlineCheckoutSession(args: {
+    sessionId: string;
+    payphoneClientTxId?: string;
+    paypalCaptureId?: string;
+    cardPayment?: {
+      payphoneId: number;
+      authorizationCode?: string | null;
+      transactionId?: string | null;
+      rawResponse: Prisma.InputJsonValue;
+      amountCents: number;
+      taxCents: number;
+    };
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const session = await tx.marketplaceOnlineCheckoutSession.findUnique({
+        where: { id: args.sessionId },
+      });
+      if (!session) throw new Error('CHECKOUT_SESSION_NOT_FOUND');
+
+      const lines = session.lines as unknown as MarketplaceCheckoutLineSnapshot[];
+
+      for (const line of lines) {
+        const product = await tx.marketplaceProduct.findUnique({
+          where: { id: line.productId },
+        });
+        if (!product || !product.published) {
+          throw new Error(`UNAVAILABLE:${line.productId}`);
+        }
+        if (product.stockQty < line.qty) {
+          throw new Error(
+            `STOCK:${line.productId}:${product.stockQty}:${product.name}`,
+          );
+        }
+        await tx.marketplaceProduct.update({
+          where: { id: line.productId },
+          data: { stockQty: { decrement: line.qty } },
+        });
+      }
+
+      const order = await tx.marketplaceOrder.create({
+        data: {
+          orderNumber: session.plannedOrderNumber,
+          customerName: session.customerName,
+          customerEmail: session.customerEmail,
+          customerPhone: session.customerPhone,
+          customerAddress: session.customerAddress,
+          notes: session.notes,
+          subtotalCents: session.subtotalCents,
+          listSubtotalCents: session.listSubtotalCents,
+          discountTotalCents: session.discountTotalCents,
+          taxCents: session.taxCents,
+          totalCents: session.totalCents,
+          currency: session.currency,
+          paymentMethod: session.paymentMethod,
+          status: MarketplaceOrderStatus.PAID,
+          paidAt: new Date(),
+          notifyWhatsapp: session.notifyWhatsapp,
+          payphoneClientTxId: args.payphoneClientTxId ?? null,
+          paypalOrderId: session.paypalOrderId,
+          paypalCaptureId: args.paypalCaptureId ?? null,
+          paymentError: null,
+          items: {
+            create: lines.map((line) => ({
+              productId: line.productId,
+              name: line.name,
+              sku: line.sku,
+              listUnitPriceCents: line.listUnitPriceCents,
+              discountPercent: line.discountPercent,
+              promoDiscountPercent: line.promoDiscountPercent,
+              unitPriceCents: line.unitPriceCents,
+              qty: line.qty,
+              imageUrl: line.imageUrl,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      if (args.cardPayment && args.payphoneClientTxId) {
+        await tx.marketplacePayment.create({
+          data: {
+            orderId: order.id,
+            clientTransactionId: args.payphoneClientTxId,
+            status: 'CONFIRMED',
+            payphoneId: args.cardPayment.payphoneId,
+            authorizationCode: args.cardPayment.authorizationCode ?? null,
+            transactionId: args.cardPayment.transactionId,
+            rawResponse: args.cardPayment.rawResponse,
+            amountCents: args.cardPayment.amountCents,
+            taxCents: args.cardPayment.taxCents,
+            currency: session.currency,
+            confirmedAt: new Date(),
+          },
+        });
+      }
+
+      await tx.marketplaceOnlineCheckoutSession.delete({
+        where: { id: session.id },
+      });
+
+      return order;
+    });
   }
 }

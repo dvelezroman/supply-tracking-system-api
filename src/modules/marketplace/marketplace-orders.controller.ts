@@ -18,6 +18,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import {
+  AbandonPayphoneCheckoutDto,
   CapturePayPalOrderDto,
   ConfirmPayphonePaymentDto,
   CreateMarketplaceOrderDto,
@@ -50,13 +51,13 @@ export class MarketplaceOrdersPublicController {
     return this.marketplace.confirmCardPayment(dto);
   }
 
-  @Post(':orderNumber/payphone/abandon')
+  @Post('payphone/abandon')
   @ApiOperation({
     summary:
-      'Cancel unpaid CARD checkout (cajita closed / failed); order stays visible to admin as CANCELLED',
+      'Discard pre-payment CARD checkout session (no marketplace order exists yet)',
   })
-  abandonPayphone(@Param('orderNumber') orderNumber: string) {
-    return this.marketplace.abandonCardCheckout(orderNumber);
+  abandonPayphone(@Body() dto: AbandonPayphoneCheckoutDto) {
+    return this.marketplace.abandonCardCheckoutSession(dto.clientTransactionId);
   }
 
   @Post(':orderNumber/paypal/capture')

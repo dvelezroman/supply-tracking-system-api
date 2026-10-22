@@ -74,17 +74,25 @@ export class MarketplaceService implements OnModuleInit {
       ) {
         return;
       }
-      const order = await this.repo.findOrderByPaypalOrderId(paypalOrderId);
-      if (!order || order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+      const session =
+        await this.repo.findOnlineCheckoutSessionByPaypalOrderId(paypalOrderId);
+      const order = session
+        ? null
+        : await this.repo.findOrderByPaypalOrderId(paypalOrderId);
+      const reference = session?.plannedOrderNumber ?? order?.orderNumber;
+      if (
+        !reference ||
+        (order && order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT)
+      ) {
         return;
       }
       try {
-        await this.capturePayPalOrder(order.orderNumber, {
+        await this.capturePayPalOrder(reference, {
           paypalOrderId,
         });
       } catch (err) {
         this.logger.error(
-          `Webhook capture failed for ${order.orderNumber}: ${
+          `Webhook capture failed for ${reference}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -577,17 +585,17 @@ export class MarketplaceService implements OnModuleInit {
     const phone = normalizePhoneE164(dto.customerPhone?.trim()) ?? null;
 
     const mergedLines = this.mergeOrderLines(dto.items);
-    const orderNumber = this.generateOrderNumber();
-    let order;
+    const plannedOrderNumber = this.generateOrderNumber();
+    let session;
     try {
-      order = await this.repo.createPendingPayPalOrder({
-        orderNumber,
+      session = await this.repo.createOnlineCheckoutSession({
+        paymentMethod: MarketplacePaymentMethod.PAYPAL,
+        plannedOrderNumber,
         customerName: dto.customerName.trim(),
         customerEmail: dto.customerEmail.trim().toLowerCase(),
         customerPhone: phone ?? undefined,
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
-        currency: 'USD',
         notifyWhatsapp: dto.notifyWhatsapp !== false,
         lines: mergedLines,
       });
@@ -598,32 +606,32 @@ export class MarketplaceService implements OnModuleInit {
     const frontendBase = (
       this.config.get<string>('frontendUrl') ?? 'http://localhost:4200'
     ).replace(/\/$/, '');
-    const returnUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(order.orderNumber)}/pago`;
-    const cancelUrl = `${frontendBase}/tienda/checkout?cancelled=1&orderNumber=${encodeURIComponent(order.orderNumber)}`;
+    const returnUrl = `${frontendBase}/tienda/pedido/${encodeURIComponent(plannedOrderNumber)}/pago`;
+    const cancelUrl = `${frontendBase}/tienda/checkout?cancelled=1`;
 
     try {
       const created = await this.paypal.createCheckoutOrder({
-        orderNumber: order.orderNumber,
-        amountCents: order.subtotalCents,
-        currency: order.currency,
+        orderNumber: plannedOrderNumber,
+        amountCents: session.subtotalCents,
+        currency: session.currency,
         returnUrl,
         cancelUrl,
       });
-      const updated = await this.repo.updateOrder(order.id, {
-        paypalOrderId: created.paypalOrderId,
-      });
-      // No email/WhatsApp until PayPal capture completes (same rule as CARD).
+      await this.repo.updateOnlineCheckoutSessionPaypalOrderId(
+        session.id,
+        created.paypalOrderId,
+      );
       return {
-        ...updated,
+        orderNumber: plannedOrderNumber,
+        subtotalCents: session.subtotalCents,
+        currency: session.currency,
+        paymentMethod: MarketplacePaymentMethod.PAYPAL,
         approveUrl: created.approveUrl,
         paypalMode: this.paypal.getProviderMode(),
       };
     } catch (err) {
+      await this.repo.deleteOnlineCheckoutSession(session.id).catch(() => undefined);
       const reason = err instanceof Error ? err.message : 'PayPal create failed';
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: reason,
-      });
       throw new BadRequestException(`Unable to start PayPal checkout: ${reason}`);
     }
   }
@@ -646,97 +654,205 @@ export class MarketplaceService implements OnModuleInit {
     }
 
     const mergedLines = this.mergeOrderLines(dto.items);
-    const orderNumber = this.generateOrderNumber();
-    // clientTransactionId ≤ 50 chars (Payphone)
+    const plannedOrderNumber = this.generateOrderNumber();
     const clientTransactionId = truncateClientTxId(
-      `PP-${orderNumber}-${randomUUID().replace(/-/g, '').slice(0, 12)}`,
+      `PP-${plannedOrderNumber}-${randomUUID().replace(/-/g, '').slice(0, 12)}`,
     );
 
-    let order;
+    let session;
     try {
-      order = await this.repo.createPendingCardOrder({
-        orderNumber,
+      session = await this.repo.createOnlineCheckoutSession({
+        paymentMethod: MarketplacePaymentMethod.CARD,
+        plannedOrderNumber,
+        clientTransactionId,
         customerName: dto.customerName.trim(),
         customerEmail: dto.customerEmail.trim().toLowerCase(),
         customerPhone: phone,
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
-        currency: 'USD',
-        payphoneClientTxId: clientTransactionId,
         notifyWhatsapp: dto.notifyWhatsapp !== false,
+        lines: mergedLines,
         computeTax: (subtotalCents) => {
           const amounts = this.payphone.buildAmounts(subtotalCents);
           return { taxCents: amounts.tax, totalCents: amounts.amount };
         },
-        lines: mergedLines,
       });
     } catch (err) {
       this.rethrowOrderPlacementError(err);
     }
 
+    return this.buildCardCheckoutResponse(session, clientTransactionId);
+  }
+
+  /** Drop pre-payment CARD session when buyer closes Cajita (no order row exists). */
+  async abandonCardCheckoutSession(clientTransactionId: string) {
+    const txId = truncateClientTxId(clientTransactionId);
+    await this.repo.deleteOnlineCheckoutSessionByClientTxId(txId);
+    return { discarded: true, clientTransactionId: txId };
+  }
+
+  /** @deprecated Legacy path param — deletes session by planned reference if still open. */
+  async abandonCardCheckout(orderNumber: string) {
+    const session =
+      await this.repo.findOnlineCheckoutSessionByPlannedOrderNumber(orderNumber);
+    if (session?.clientTransactionId) {
+      return this.abandonCardCheckoutSession(session.clientTransactionId);
+    }
+    return { discarded: true, orderNumber };
+  }
+
+  private buildCardCheckoutResponse(
+    session: {
+      subtotalCents: number;
+      totalCents: number;
+      currency: string;
+      plannedOrderNumber: string;
+      customerEmail: string;
+      customerPhone: string | null;
+    },
+    clientTransactionId: string,
+  ) {
     const box = this.payphone.buildBoxConfig({
       clientTransactionId,
-      subtotalCents: order.subtotalCents,
-      currency: order.currency,
-      orderNumber: order.orderNumber,
-      email: order.customerEmail,
-      phoneNumber: order.customerPhone ?? undefined,
+      subtotalCents: session.subtotalCents,
+      currency: session.currency,
+      orderNumber: session.plannedOrderNumber,
+      email: session.customerEmail,
+      phoneNumber: session.customerPhone ?? undefined,
     });
-
-    // No WhatsApp/email until payment confirmed — unpaid CARD drafts are discarded on cancel/fail.
     return {
-      ...order,
       clientTransactionId,
       payment: box,
+      paymentMethod: MarketplacePaymentMethod.CARD,
     };
-  }
-
-  /**
-   * Discard unpaid CARD checkout (cajita closed / SDK fail / user picks another method).
-   * Marks CANCELLED so admins can still see the order.
-   */
-  async abandonCardCheckout(orderNumber: string) {
-    const order = await this.repo.findOrderByNumber(orderNumber);
-    if (!order) {
-      return { abandoned: true, orderNumber };
-    }
-    if (order.paymentMethod !== MarketplacePaymentMethod.CARD) {
-      throw new BadRequestException('Only CARD checkouts can be abandoned');
-    }
-    if (
-      order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT &&
-      order.status !== MarketplaceOrderStatus.PAYMENT_FAILED
-    ) {
-      throw new BadRequestException('Order can no longer be abandoned');
-    }
-    await this.repo.cancelOrderSoft(order.id, {
-      paymentError: 'Checkout abandoned by customer',
-    });
-    this.logger.log(`Cancelled unpaid CARD order ${orderNumber} (checkout abandoned)`);
-    return { abandoned: true, orderNumber, status: MarketplaceOrderStatus.CANCELLED };
-  }
-
-  private async discardUnpaidCardOrder(
-    orderId: string,
-    orderNumber: string,
-    reason: string,
-  ): Promise<void> {
-    try {
-      await this.repo.cancelOrderSoft(orderId, { paymentError: reason });
-      this.logger.log(
-        `Cancelled unpaid CARD order ${orderNumber}: ${reason}`,
-      );
-    } catch (err) {
-      this.logger.error(
-        `Failed to cancel CARD order ${orderNumber}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
   }
 
   async confirmCardPayment(dto: ConfirmPayphonePaymentDto) {
     const clientTxId = truncateClientTxId(dto.clientTransactionId);
+
+    const existingOrder =
+      await this.repo.findOrderByPayphoneClientTxId(clientTxId);
+    if (
+      existingOrder &&
+      (existingOrder.status === MarketplaceOrderStatus.PAID ||
+        existingOrder.status === MarketplaceOrderStatus.EMAILED)
+    ) {
+      return {
+        orderNumber: existingOrder.orderNumber,
+        status: existingOrder.status,
+        paymentStatus: 'CONFIRMED' as const,
+      };
+    }
+
+    const session =
+      await this.repo.findOnlineCheckoutSessionByClientTxId(clientTxId);
+    if (session) {
+      return this.confirmCardPaymentFromSession(dto, session, clientTxId);
+    }
+
+    return this.confirmCardPaymentLegacyOrder(dto, clientTxId);
+  }
+
+  private async confirmCardPaymentFromSession(
+    dto: ConfirmPayphonePaymentDto,
+    session: NonNullable<
+      Awaited<ReturnType<typeof this.repo.findOnlineCheckoutSessionByClientTxId>>
+    >,
+    clientTxId: string,
+  ) {
+    if (session.clientTransactionId !== clientTxId) {
+      throw new BadRequestException('clientTransactionId mismatch');
+    }
+
+    const confirm = await this.payphone.confirmTransaction(
+      dto.payphoneId,
+      clientTxId,
+    );
+
+    if (!this.payphone.isApproved(confirm)) {
+      const reason =
+        confirm.message ||
+        confirm.transactionStatus ||
+        `Payphone statusCode ${confirm.statusCode ?? 'unknown'}`;
+      throw new BadRequestException({
+        message: 'Payment was not approved',
+        details: {
+          transactionStatus: confirm.transactionStatus,
+          reason,
+          chooseAnotherPaymentMethod: true,
+        },
+      });
+    }
+
+    const expectedAmount = session.totalCents || session.subtotalCents;
+    if (
+      typeof confirm.amount === 'number' &&
+      confirm.amount > 0 &&
+      confirm.amount !== expectedAmount
+    ) {
+      throw new BadRequestException({
+        message: 'Payment amount mismatch',
+        details: { chooseAnotherPaymentMethod: true },
+      });
+    }
+
+    if (
+      confirm.currency &&
+      confirm.currency.toUpperCase() !== session.currency.toUpperCase()
+    ) {
+      throw new BadRequestException({
+        message: 'Payment currency mismatch',
+        details: { chooseAnotherPaymentMethod: true },
+      });
+    }
+
+    let paid;
+    try {
+      paid = await this.repo.finalizeOnlineCheckoutSession({
+        sessionId: session.id,
+        payphoneClientTxId: clientTxId,
+        cardPayment: {
+          payphoneId: dto.payphoneId,
+          authorizationCode: confirm.authorizationCode ?? null,
+          transactionId:
+            confirm.transactionId != null
+              ? String(confirm.transactionId)
+              : null,
+          rawResponse: confirm as unknown as Prisma.InputJsonValue,
+          amountCents: session.totalCents,
+          taxCents: session.taxCents,
+        },
+      });
+    } catch (err) {
+      this.rethrowOrderPlacementError(err);
+    }
+
+    const settings = await this.repo.getSettings();
+    const emailed = await this.sendOrderEmails(
+      {
+        ...paid,
+        authorizationCode: confirm.authorizationCode ?? null,
+        payphoneTransactionId:
+          confirm.transactionId != null ? String(confirm.transactionId) : null,
+      },
+      settings,
+      MarketplaceOrderStatus.PAID,
+      MarketplaceOrderStatus.PAID,
+      true,
+    );
+
+    return {
+      orderNumber: emailed.orderNumber,
+      status: emailed.status,
+      paymentStatus: 'CONFIRMED' as const,
+    };
+  }
+
+  /** Legacy unpaid CARD orders created before checkout sessions. */
+  private async confirmCardPaymentLegacyOrder(
+    dto: ConfirmPayphonePaymentDto,
+    clientTxId: string,
+  ) {
     const paymentRow = await this.repo.findPaymentByClientTxId(clientTxId);
     const order =
       paymentRow?.order ??
@@ -761,111 +877,35 @@ export class MarketplaceService implements OnModuleInit {
       throw new BadRequestException('Order is not awaiting payment');
     }
 
-    if (
-      order.payphoneClientTxId &&
-      order.payphoneClientTxId !== clientTxId
-    ) {
-      throw new BadRequestException('clientTransactionId mismatch');
-    }
-
     const confirm = await this.payphone.confirmTransaction(
       dto.payphoneId,
       clientTxId,
     );
-
     if (!this.payphone.isApproved(confirm)) {
-      const reason =
-        confirm.message ||
-        confirm.transactionStatus ||
-        `Payphone statusCode ${confirm.statusCode ?? 'unknown'}`;
-      await this.discardUnpaidCardOrder(order.id, order.orderNumber, reason);
-      throw new BadRequestException({
-        message: 'Payment was not approved',
-        details: {
-          transactionStatus: confirm.transactionStatus,
-          reason,
-          chooseAnotherPaymentMethod: true,
-        },
-      });
+      throw new BadRequestException('Payment was not approved');
     }
 
-    const expectedAmount = order.totalCents || order.subtotalCents;
-    if (
-      typeof confirm.amount === 'number' &&
-      confirm.amount > 0 &&
-      confirm.amount !== expectedAmount
-    ) {
-      this.logger.warn(
-        `Payphone amount mismatch for ${order.orderNumber}: expected ${expectedAmount}, got ${confirm.amount}`,
-      );
-      await this.discardUnpaidCardOrder(
-        order.id,
-        order.orderNumber,
-        `Amount mismatch: expected ${expectedAmount}, got ${confirm.amount}`,
-      );
-      throw new BadRequestException({
-        message: 'Payment amount mismatch',
-        details: { chooseAnotherPaymentMethod: true },
-      });
-    }
-
-    if (
-      confirm.currency &&
-      confirm.currency.toUpperCase() !== order.currency.toUpperCase()
-    ) {
-      await this.discardUnpaidCardOrder(
-        order.id,
-        order.orderNumber,
-        `Currency mismatch: ${confirm.currency}`,
-      );
-      throw new BadRequestException({
-        message: 'Payment currency mismatch',
-        details: { chooseAnotherPaymentMethod: true },
-      });
-    }
-
-    try {
-      await this.repo.decrementStockForOrder(order.id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.discardUnpaidCardOrder(order.id, order.orderNumber, msg);
-      this.rethrowOrderPlacementError(err);
-    }
-
+    await this.repo.decrementStockForOrder(order.id);
     if (paymentRow) {
       await this.repo.updatePayment(paymentRow.id, {
         status: 'CONFIRMED',
         payphoneId: dto.payphoneId,
-        authorizationCode: confirm.authorizationCode ?? null,
-        transactionId:
-          confirm.transactionId != null ? String(confirm.transactionId) : null,
-        rawResponse: confirm as unknown as Prisma.InputJsonValue,
         confirmedAt: new Date(),
       });
     }
-
     const paid = await this.repo.updateOrder(order.id, {
       status: MarketplaceOrderStatus.PAID,
       paidAt: new Date(),
       paymentError: null,
     });
-
     const settings = await this.repo.getSettings();
     const emailed = await this.sendOrderEmails(
-      {
-        ...paid,
-        taxCents: paid.taxCents,
-        totalCents: paid.totalCents,
-        authorizationCode: confirm.authorizationCode ?? null,
-        payphoneTransactionId:
-          confirm.transactionId != null ? String(confirm.transactionId) : null,
-      },
+      paid,
       settings,
       MarketplaceOrderStatus.PAID,
       MarketplaceOrderStatus.PAID,
       true,
     );
-
     return {
       orderNumber: emailed.orderNumber,
       status: emailed.status,
@@ -884,28 +924,45 @@ export class MarketplaceService implements OnModuleInit {
   }
 
   async capturePayPalOrder(
-    orderNumber: string,
+    checkoutReference: string,
     dto: CapturePayPalOrderDto,
   ) {
-    const order = await this.repo.findOrderByNumber(orderNumber);
-    if (!order) throw new NotFoundException('Order not found');
-
+    const existingOrder = await this.repo.findOrderByNumber(checkoutReference);
     if (
-      order.status === MarketplaceOrderStatus.EMAILED ||
-      order.status === MarketplaceOrderStatus.PAID ||
-      (order.paypalCaptureId &&
-        order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT)
+      existingOrder &&
+      (existingOrder.status === MarketplaceOrderStatus.PAID ||
+        existingOrder.status === MarketplaceOrderStatus.EMAILED)
     ) {
-      return order;
+      return existingOrder;
     }
 
-    if (order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
-      throw new BadRequestException('Order is not awaiting payment');
+    const session =
+      await this.repo.findOnlineCheckoutSessionByPlannedOrderNumber(
+        checkoutReference,
+      );
+    if (session) {
+      return this.capturePayPalOrderFromSession(session, dto);
     }
-    if (
-      order.paypalOrderId &&
-      order.paypalOrderId !== dto.paypalOrderId
-    ) {
+
+    if (!existingOrder) {
+      throw new NotFoundException('Checkout session or order not found');
+    }
+
+    return this.capturePayPalOrderLegacy(existingOrder, dto);
+  }
+
+  private async capturePayPalOrderFromSession(
+    session: NonNullable<
+      Awaited<
+        ReturnType<typeof this.repo.findOnlineCheckoutSessionByPlannedOrderNumber>
+      >
+    >,
+    dto: CapturePayPalOrderDto,
+  ) {
+    if (session.paymentMethod !== MarketplacePaymentMethod.PAYPAL) {
+      throw new BadRequestException('Not a PayPal checkout session');
+    }
+    if (session.paypalOrderId && session.paypalOrderId !== dto.paypalOrderId) {
       throw new BadRequestException('PayPal order id mismatch');
     }
 
@@ -914,50 +971,64 @@ export class MarketplaceService implements OnModuleInit {
       dto.sig &&
       !this.paypal.verifyMockSignature(
         dto.paypalOrderId,
-        order.orderNumber,
+        session.plannedOrderNumber,
         dto.sig,
       )
     ) {
       throw new BadRequestException('Invalid mock payment signature');
     }
 
-    try {
-      await this.repo.decrementStockForOrder(order.id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: msg,
-      });
-      this.rethrowOrderPlacementError(err);
-    }
-
     const capture = await this.paypal.captureOrder(dto.paypalOrderId);
     if (capture.status !== 'COMPLETED') {
-      // Stock already decremented — restock so inventory stays accurate.
-      try {
-        await this.repo.restockOrderItems(order.id);
-      } catch (restockErr) {
-        this.logger.error(
-          `Failed to restock after capture failure ${order.orderNumber}: ${
-            restockErr instanceof Error ? restockErr.message : String(restockErr)
-          }`,
-        );
-      }
-      await this.repo.updateOrder(order.id, {
-        status: MarketplaceOrderStatus.PAYMENT_FAILED,
-        paymentError: `Capture status: ${capture.status}`,
-      });
       throw new BadRequestException('PayPal capture failed');
     }
 
     if (
       capture.amountCents > 0 &&
-      capture.amountCents !== order.subtotalCents
+      capture.amountCents !== session.subtotalCents
     ) {
       this.logger.warn(
-        `PayPal amount mismatch for ${order.orderNumber}: expected ${order.subtotalCents}, got ${capture.amountCents}`,
+        `PayPal amount mismatch for ${session.plannedOrderNumber}: expected ${session.subtotalCents}, got ${capture.amountCents}`,
       );
+    }
+
+    let paid;
+    try {
+      paid = await this.repo.finalizeOnlineCheckoutSession({
+        sessionId: session.id,
+        paypalCaptureId: capture.captureId,
+      });
+    } catch (err) {
+      this.rethrowOrderPlacementError(err);
+    }
+
+    const settings = await this.repo.getSettings();
+    return this.sendOrderEmails(
+      paid,
+      settings,
+      MarketplaceOrderStatus.PAID,
+      MarketplaceOrderStatus.PAID,
+      true,
+    );
+  }
+
+  /** Legacy PayPal orders created before checkout sessions. */
+  private async capturePayPalOrderLegacy(
+    order: NonNullable<Awaited<ReturnType<typeof this.repo.findOrderByNumber>>>,
+    dto: CapturePayPalOrderDto,
+  ) {
+    if (order.status !== MarketplaceOrderStatus.AWAITING_PAYMENT) {
+      throw new BadRequestException('Order is not awaiting payment');
+    }
+    if (order.paypalOrderId && order.paypalOrderId !== dto.paypalOrderId) {
+      throw new BadRequestException('PayPal order id mismatch');
+    }
+
+    await this.repo.decrementStockForOrder(order.id);
+    const capture = await this.paypal.captureOrder(dto.paypalOrderId);
+    if (capture.status !== 'COMPLETED') {
+      await this.repo.restockOrderItems(order.id).catch(() => undefined);
+      throw new BadRequestException('PayPal capture failed');
     }
 
     const paid = await this.repo.updateOrder(order.id, {
