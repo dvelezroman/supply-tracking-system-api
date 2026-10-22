@@ -234,6 +234,7 @@ Siguen disponibles en checkout híbrido; no requieren `PAYPHONE_*`.
 |---------|---------|
 | No aparece “Pagar con tarjeta” | Admin `cardPaymentsEnabled`, `.env` TOKEN/STOREID, reinicio API, `PAYPHONE_PAYMENTS_ENABLED` |
 | Acceso denegado en Cajita | Dominio Web en Developer vs URL real; Referrer-Policy |
+| Modal abre pero Cajita dice **«Algo salió mal»** (título Payphone) | DevTools → **Network** → peticiones a `paymentbox.payphonetodoesposible.com` (403/401/400). Casi siempre **dominio no autorizado** (`localhost` vs `127.0.0.1`, puerto distinto, prod sin registrar host). Token/StoreID de app **WEB** (pruebas vs live). |
 | Redirect OK pero pago no confirma | Logs API al llamar Confirm; TOKEN; ventana de 5 min; body `id` + `clientTxId` |
 | Email no llega | SMTP_*, `orderNotificationEmail` / `CONTACT_EMAIL` |
 | Monto distinto al carrito | IVA 15% exclusivo: total = subtotal + tax (`MARKETPLACE_TAX_RATE_BPS=1500`) |
