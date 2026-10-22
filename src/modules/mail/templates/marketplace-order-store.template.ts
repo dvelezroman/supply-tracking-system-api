@@ -2,6 +2,8 @@ import {
   buildPlainOrderSummary,
   buildBankTransferInstructionsHtml,
   buildBankTransferInstructionsText,
+  buildPaymentConfirmationHtml,
+  buildPaymentConfirmationText,
   escapeHtml,
   formatMoney,
   type OrderEmailBase,
@@ -81,21 +83,10 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
           <td style="padding:16px;font-size:18px;font-weight:700;color:#ffb4b4;text-align:right;">${formatMoney(payload.subtotalCents, payload.currency)}</td>
         </tr>`;
 
-  const payphoneMeta =
-    payload.authorizationCode || payload.payphoneTransactionId
-      ? `<p style="margin:12px 0 0;font-size:14px;line-height:1.55;color:#334155;">
-          ${
-            payload.authorizationCode
-              ? `<strong style="color:#0f172a;">Autorización:</strong> ${escapeHtml(payload.authorizationCode)}`
-              : ''
-          }
-          ${
-            payload.payphoneTransactionId
-              ? `${payload.authorizationCode ? '<br/>' : ''}<strong style="color:#0f172a;">Transacción:</strong> ${escapeHtml(payload.payphoneTransactionId)}`
-              : ''
-          }
-        </p>`
-      : '';
+  const paymentMethodDisplay =
+    payload.paymentMethodLabel?.trim() ||
+    payload.paymentMethod?.trim() ||
+    '';
 
   const bodyHtml = `
           <tr>
@@ -126,11 +117,11 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
                   : ''
               }
               ${
-                payload.paymentMethod
-                  ? `<p style="margin:12px 0 0;font-size:14px;line-height:1.55;color:#334155;"><strong style="color:#0f172a;">Pago:</strong> ${escapeHtml(payload.paymentMethod)}</p>`
+                paymentMethodDisplay && !payload.paymentConfirmed
+                  ? `<p style="margin:12px 0 0;font-size:14px;line-height:1.55;color:#334155;"><strong style="color:#0f172a;">Pago:</strong> ${escapeHtml(paymentMethodDisplay)}</p>`
                   : ''
               }
-              ${payphoneMeta}
+              ${buildPaymentConfirmationHtml(payload)}
               ${buildBankTransferInstructionsHtml(payload)}
               <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:24px 0 10px;">Productos</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
@@ -165,7 +156,10 @@ export function buildStoreOrderEmail(payload: OrderEmailBase): {
     html,
     text: [
       buildPlainOrderSummary(payload, heroLabel),
-      payload.paymentMethod ? `Método de pago: ${payload.paymentMethod}` : '',
+      paymentMethodDisplay && !payload.paymentConfirmed
+        ? `Método de pago: ${paymentMethodDisplay}`
+        : '',
+      buildPaymentConfirmationText(payload),
       bankText,
     ]
       .filter(Boolean)

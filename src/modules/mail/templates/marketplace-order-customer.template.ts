@@ -2,6 +2,8 @@ import {
   buildPlainOrderSummary,
   buildBankTransferInstructionsHtml,
   buildBankTransferInstructionsText,
+  buildPaymentConfirmationHtml,
+  buildPaymentConfirmationText,
   escapeHtml,
   formatMoney,
   type OrderEmailBase,
@@ -86,6 +88,7 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
                 </tr>
               </table>
               ${buildBankTransferInstructionsHtml(payload)}
+              ${buildPaymentConfirmationHtml(payload)}
               <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin:20px 0 12px;">Tu pedido</div>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${itemCards}</table>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;">
@@ -154,6 +157,7 @@ export function buildCustomerOrderEmail(payload: CustomerOrderEmailPayload): {
     '',
     nextStepCopy,
     bankText ? `\n${bankText}` : '',
+    buildPaymentConfirmationText(payload),
   ].filter(Boolean);
 
   return {

@@ -48,6 +48,10 @@ import { WhatsappNotificationsService } from '../whatsapp/whatsapp-notifications
 import { PayphoneService } from '../payphone/payphone.service';
 import { truncateClientTxId } from '../payphone/payphone-amounts.util';
 import { normalizePhoneE164 } from '../../common/phone.util';
+import {
+  resolveMarketplacePaymentDetails,
+  type ResolvedMarketplacePaymentDetails,
+} from './marketplace-payment-display.util';
 
 @Injectable()
 export class MarketplaceService implements OnModuleInit {
@@ -1092,6 +1096,26 @@ export class MarketplaceService implements OnModuleInit {
     );
   }
 
+  private async resolveOrderPaymentDetails(
+    order: {
+      id: string;
+      paymentMethod?: MarketplacePaymentMethod | string | null;
+      paypalCaptureId?: string | null;
+      paypalOrderId?: string | null;
+      payphoneClientTxId?: string | null;
+    },
+    overrides?: {
+      authorizationCode?: string | null;
+      payphoneTransactionId?: string | null;
+    },
+  ) {
+    const paymentRow =
+      order.paymentMethod === MarketplacePaymentMethod.CARD
+        ? await this.repo.findLatestConfirmedPayment(order.id)
+        : null;
+    return resolveMarketplacePaymentDetails(order, paymentRow, overrides);
+  }
+
   private async sendOrderEmails(
     order: {
       id: string;
@@ -1109,6 +1133,9 @@ export class MarketplaceService implements OnModuleInit {
       currency: string;
       paymentMethod?: MarketplacePaymentMethod | string;
       notifyWhatsapp?: boolean;
+      paypalCaptureId?: string | null;
+      paypalOrderId?: string | null;
+      payphoneClientTxId?: string | null;
       authorizationCode?: string | null;
       payphoneTransactionId?: string | null;
       items: Array<{
@@ -1171,6 +1198,13 @@ export class MarketplaceService implements OnModuleInit {
       ? ('ORDER_PAID' as const)
       : ('ORDER_REQUEST' as const);
 
+    const paymentDetails = paymentConfirmed
+      ? await this.resolveOrderPaymentDetails(order, {
+          authorizationCode: order.authorizationCode,
+          payphoneTransactionId: order.payphoneTransactionId,
+        })
+      : null;
+
     const emailBase = {
       orderNumber: order.orderNumber,
       customerName: order.customerName,
@@ -1185,10 +1219,15 @@ export class MarketplaceService implements OnModuleInit {
       totalCents: order.totalCents ?? order.subtotalCents,
       currency: order.currency,
       paymentMethod: order.paymentMethod,
+      paymentMethodLabel: paymentDetails?.paymentMethodLabel,
       paymentConfirmed,
       emailKind,
-      authorizationCode: order.authorizationCode ?? undefined,
-      payphoneTransactionId: order.payphoneTransactionId ?? undefined,
+      authorizationCode: paymentDetails?.authorizationCode,
+      payphoneTransactionId: paymentDetails?.payphoneTransactionId,
+      payphoneClientTxId: paymentDetails?.payphoneClientTxId,
+      paypalCaptureId: paymentDetails?.paypalCaptureId,
+      paypalOrderId: paymentDetails?.paypalOrderId,
+      transactionReference: paymentDetails?.transactionReference,
       bankTransfer,
       items: order.items.map((i) => ({
         name: i.name,
@@ -1236,6 +1275,7 @@ export class MarketplaceService implements OnModuleInit {
         settings,
         phase: paymentConfirmed ? 'paid' : 'awaiting',
         confirmationUrl: orderConfirmationUrl,
+        paymentDetails: paymentDetails ?? undefined,
       });
 
       return updated;
@@ -1256,10 +1296,13 @@ export class MarketplaceService implements OnModuleInit {
       customerName: string;
       customerPhone: string | null;
       subtotalCents: number;
+      totalCents?: number;
+      taxCents?: number;
       currency: string;
       paymentMethod?: MarketplacePaymentMethod | string;
       notifyWhatsapp?: boolean;
     };
+    paymentDetails?: ResolvedMarketplacePaymentDetails;
     settings: {
       bankTransferEnabled: boolean;
       bankName: string | null;
@@ -1308,7 +1351,14 @@ export class MarketplaceService implements OnModuleInit {
 
       // Paid (PayPal / Payphone / offline confirm): customer paid notice.
       // Admin already got store email (ORDER_PAID) from sendOrderEmails.
-      await this.whatsapp.notifyCustomerPaymentApproved(notifyInput);
+      await this.whatsapp.notifyCustomerPaymentApproved(notifyInput, {
+        paymentMethodLabel: args.paymentDetails?.paymentMethodLabel,
+        transactionReference: args.paymentDetails?.transactionReference,
+        amountCents:
+          args.order.totalCents && args.order.totalCents > 0
+            ? args.order.totalCents
+            : args.order.subtotalCents,
+      });
     } catch (err) {
       this.logger.error(
         `WhatsApp notify failed for ${args.order.orderNumber}: ${
@@ -1382,6 +1432,13 @@ export class MarketplaceService implements OnModuleInit {
       order.status === MarketplaceOrderStatus.AWAITING_PAYMENT
         ? this.bankTransferDetailsFromSettings(settings)
         : null;
+    const isPaidOnline =
+      (order.status === MarketplaceOrderStatus.PAID ||
+        order.status === MarketplaceOrderStatus.EMAILED) &&
+      this.isOnlinePaymentMethod(order.paymentMethod);
+    const paymentDetails = isPaidOnline
+      ? await this.resolveOrderPaymentDetails(order)
+      : null;
     return {
       orderNumber: order.orderNumber,
       status: order.status,
@@ -1394,6 +1451,9 @@ export class MarketplaceService implements OnModuleInit {
       totalCents: order.totalCents || order.subtotalCents,
       currency: order.currency,
       paidAt: order.paidAt,
+      paymentMethodLabel: paymentDetails?.paymentMethodLabel,
+      transactionReference: paymentDetails?.transactionReference,
+      authorizationCode: paymentDetails?.authorizationCode,
       bankTransfer,
       items: order.items.map((i) => ({
         name: i.name,

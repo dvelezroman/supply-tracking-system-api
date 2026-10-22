@@ -177,19 +177,38 @@ export function buildMarketplacePaymentApprovedCustomerCopy(args: {
   customerName: string;
   orderNumber: string;
   subtotalCents: number;
+  amountCents?: number;
   currency?: string;
+  paymentMethodLabel?: string;
+  transactionReference?: string;
 }): WhatsappTemplateCopy {
+  const amount = args.amountCents ?? args.subtotalCents;
+  const method = args.paymentMethodLabel?.trim();
+  const tx = args.transactionReference?.trim();
+  const contentMessage = method
+    ? truncateTemplateParam(
+        `Pago confirmado (${method}).`,
+        WHATSAPP_CONTENT_MESSAGE_MAX_LENGTH,
+      )
+    : truncateTemplateParam(
+        'Pago confirmado. Gracias.',
+        WHATSAPP_CONTENT_MESSAGE_MAX_LENGTH,
+      );
+  const extParts = [
+    `#${shortOrderId(args.orderNumber)}`,
+    moneyUsd(amount, args.currency),
+    method,
+    tx ? `Tx ${tx}` : '',
+    'Prepararemos su pedido.',
+  ].filter(Boolean);
   return {
     contact: truncateTemplateParam(
       args.customerName.trim().split(/\s+/)[0] || args.customerName || 'Cliente',
       40,
     ),
-    contentMessage: truncateTemplateParam(
-      'Pago confirmado. Gracias.',
-      WHATSAPP_CONTENT_MESSAGE_MAX_LENGTH,
-    ),
+    contentMessage,
     contentMessageExt: truncateTemplateParam(
-      `#${shortOrderId(args.orderNumber)} · ${moneyUsd(args.subtotalCents, args.currency)} · Prepararemos su pedido.`,
+      extParts.join(' · '),
       WHATSAPP_CONTENT_MESSAGE_EXT_MAX_LENGTH,
     ),
   };

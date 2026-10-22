@@ -35,13 +35,99 @@ export type OrderEmailBase = {
   items: OrderEmailLine[];
   fromName?: string | null;
   paymentMethod?: 'EMAIL' | 'PAYPAL' | 'BANK_TRANSFER' | 'CARD' | string;
+  paymentMethodLabel?: string;
   /** When true, email is a post-payment confirmation. */
   paymentConfirmed?: boolean;
   emailKind?: 'ORDER_REQUEST' | 'ORDER_PAID' | 'PAYMENT_FAILED';
   authorizationCode?: string;
   payphoneTransactionId?: string;
+  payphoneClientTxId?: string;
+  paypalCaptureId?: string;
+  paypalOrderId?: string;
+  /** Primary transaction ref for customer-facing copy. */
+  transactionReference?: string;
   bankTransfer?: BankTransferEmailDetails | null;
 };
+
+export function buildPaymentConfirmationHtml(payload: OrderEmailBase): string {
+  if (!payload.paymentConfirmed) return '';
+
+  const method =
+    payload.paymentMethodLabel?.trim() ||
+    payload.paymentMethod?.trim() ||
+    '';
+  const rows: Array<[string, string]> = [];
+  if (method) rows.push(['Forma de pago', method]);
+  if (payload.transactionReference) {
+    rows.push(['N.º de transacción', payload.transactionReference]);
+  }
+  if (payload.authorizationCode) {
+    rows.push(['Código de autorización', payload.authorizationCode]);
+  }
+  if (
+    payload.paymentMethod === 'PAYPAL' &&
+    payload.paypalOrderId &&
+    payload.paypalOrderId !== payload.transactionReference
+  ) {
+    rows.push(['Pedido PayPal', payload.paypalOrderId]);
+  }
+  if (
+    payload.paymentMethod === 'CARD' &&
+    payload.payphoneClientTxId &&
+    payload.payphoneClientTxId !== payload.transactionReference
+  ) {
+    rows.push(['Referencia Payphone', payload.payphoneClientTxId]);
+  }
+  if (rows.length === 0) return '';
+
+  const rowHtml = rows
+    .map(
+      ([label, value]) => `<tr>
+        <td style="padding:6px 0;font-size:13px;color:#64748b;width:42%;vertical-align:top;">${escapeHtml(label)}</td>
+        <td style="padding:6px 0;font-size:14px;font-weight:600;color:#0f172a;word-break:break-word;">${escapeHtml(value)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;margin:16px 0 0;">
+    <tr>
+      <td style="padding:14px 16px;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#15803d;margin-bottom:8px;">Pago</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rowHtml}</table>
+      </td>
+    </tr>
+  </table>`;
+}
+
+export function buildPaymentConfirmationText(payload: OrderEmailBase): string {
+  if (!payload.paymentConfirmed) return '';
+  const lines: string[] = ['--- Pago confirmado ---'];
+  const method =
+    payload.paymentMethodLabel?.trim() ||
+    payload.paymentMethod?.trim();
+  if (method) lines.push(`Forma de pago: ${method}`);
+  if (payload.transactionReference) {
+    lines.push(`Transacción: ${payload.transactionReference}`);
+  }
+  if (payload.authorizationCode) {
+    lines.push(`Autorización: ${payload.authorizationCode}`);
+  }
+  if (
+    payload.paymentMethod === 'PAYPAL' &&
+    payload.paypalOrderId &&
+    payload.paypalOrderId !== payload.transactionReference
+  ) {
+    lines.push(`Pedido PayPal: ${payload.paypalOrderId}`);
+  }
+  if (
+    payload.paymentMethod === 'CARD' &&
+    payload.payphoneClientTxId &&
+    payload.payphoneClientTxId !== payload.transactionReference
+  ) {
+    lines.push(`Referencia Payphone: ${payload.payphoneClientTxId}`);
+  }
+  return lines.length > 1 ? lines.join('\n') : '';
+}
 
 export function buildBankTransferInstructionsHtml(
   payload: OrderEmailBase,
@@ -184,10 +270,11 @@ export function buildPlainOrderSummary(
     payload.totalCents !== payload.subtotalCents
       ? [`Total: ${formatMoney(payload.totalCents, payload.currency)}`]
       : []),
-    payload.authorizationCode
+    buildPaymentConfirmationText(payload) || '',
+    payload.authorizationCode && !payload.paymentConfirmed
       ? `Autorización: ${payload.authorizationCode}`
       : '',
-    payload.payphoneTransactionId
+    payload.payphoneTransactionId && !payload.paymentConfirmed
       ? `Transacción Payphone: ${payload.payphoneTransactionId}`
       : '',
   ]

@@ -251,6 +251,9 @@ export class WhatsappNotificationsService {
       force?: boolean;
       actorUserId?: string | null;
       source?: WhatsappNotificationSource;
+      paymentMethodLabel?: string;
+      transactionReference?: string;
+      amountCents?: number;
     },
   ): Promise<WhatsappSendStatus> {
     if (order.notifyWhatsapp === false) {
@@ -271,7 +274,10 @@ export class WhatsappNotificationsService {
         customerName: order.customerName,
         orderNumber: order.orderNumber,
         subtotalCents: order.subtotalCents,
+        amountCents: opts?.amountCents,
         currency: order.currency,
+        paymentMethodLabel: opts?.paymentMethodLabel,
+        transactionReference: opts?.transactionReference,
       }),
     });
   }

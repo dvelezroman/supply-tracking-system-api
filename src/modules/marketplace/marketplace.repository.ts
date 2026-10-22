@@ -620,6 +620,13 @@ export class MarketplaceRepository {
     });
   }
 
+  findLatestConfirmedPayment(orderId: string) {
+    return this.prisma.marketplacePayment.findFirst({
+      where: { orderId, status: 'CONFIRMED' },
+      orderBy: { confirmedAt: 'desc' },
+    });
+  }
+
   findOrders(params: {
     skip?: number;
     take?: number;
