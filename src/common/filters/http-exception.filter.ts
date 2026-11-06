@@ -21,6 +21,12 @@ const BROWSER_PROBE_PATHS = new Set([
 /** This API is REST-only (`/api/v0/*`). tRPC clients hitting `/api/trpc/*` are misconfigured probes. */
 const TRPC_PROBE_PREFIX = '/api/trpc';
 
+/**
+ * Better Auth default base (`GET /api/auth/get-session`, sign-in, etc.).
+ * Real auth on this API is `POST /api/v0/auth/login`.
+ */
+const BETTER_AUTH_PROBE_PREFIX = '/api/auth';
+
 /** Meta/Facebook webhooks POST `/?page_id=…` when callback URL points at the API host root. */
 function isMetaWebhookMisconfigProbe(
   method: string,
@@ -34,6 +40,13 @@ function isMetaWebhookMisconfigProbe(
   return String(pageId).length > 0;
 }
 
+function isBetterAuthProbe(path: string): boolean {
+  return (
+    path === BETTER_AUTH_PROBE_PREFIX ||
+    path.startsWith(`${BETTER_AUTH_PROBE_PREFIX}/`)
+  );
+}
+
 function isNoRouteProbe404(
   status: number,
   method: string,
@@ -43,6 +56,7 @@ function isNoRouteProbe404(
   if (status !== HttpStatus.NOT_FOUND) return false;
 
   if (isMetaWebhookMisconfigProbe(method, path, query)) return true;
+  if (isBetterAuthProbe(path)) return true;
 
   if (method !== 'GET') return false;
   if (BROWSER_PROBE_PATHS.has(path)) return true;
