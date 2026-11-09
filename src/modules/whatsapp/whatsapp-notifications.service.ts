@@ -12,6 +12,7 @@ import {
   buildCustomCopy,
   buildMarketplaceOrderCancelledCustomerCopy,
   buildMarketplaceOrderReceivedCustomerCopy,
+  buildMarketplacePaidAdminCopy,
   buildMarketplacePaymentApprovedCustomerCopy,
   buildMarketplacePendingAdminCopy,
   type WhatsappTemplateCopy,
@@ -58,6 +59,8 @@ export type MarketplaceOrderNotifyInput = {
   customerName: string;
   customerPhone: string | null;
   subtotalCents: number;
+  /** Charge total (incl. tax for CARD). Falls back to subtotalCents when omitted. */
+  totalCents?: number;
   currency: string;
   paymentMethod: MarketplacePaymentMethod | string;
   notifyWhatsapp?: boolean;
@@ -164,6 +167,44 @@ export class WhatsappNotificationsService {
           customerName: order.customerName,
           orderNumber: order.orderNumber,
           subtotalCents: order.subtotalCents,
+          currency: order.currency,
+          paymentMethod: order.paymentMethod,
+        }),
+      });
+      results.push({ userId: admin.id, status });
+      if (status === 'sent') sent += 1;
+      else if (status === 'failed') failed += 1;
+      else skipped += 1;
+    }
+    return { sent, skipped, failed, results };
+  }
+
+  async notifyMarketplacePaidAdmins(
+    order: MarketplaceOrderNotifyInput,
+  ): Promise<BatchSendSummary> {
+    const admins = await this.listAdminsWithPhone();
+    const results: BatchSendSummary['results'] = [];
+    let sent = 0;
+    let skipped = 0;
+    let failed = 0;
+    const totalCents =
+      order.totalCents && order.totalCents > 0
+        ? order.totalCents
+        : order.subtotalCents;
+    for (const admin of admins) {
+      const status = await this.dispatch({
+        occasion: WhatsappOccasion.MARKETPLACE_PAID_ADMIN,
+        occasionKey: `marketplace-paid-admin:${order.id}`,
+        recipientKey: `admin:${admin.id}`,
+        recipientLabel: admin.email,
+        phone: admin.phone,
+        actorUserId: admin.id,
+        marketplaceOrderId: order.id,
+        copy: buildMarketplacePaidAdminCopy({
+          adminName: admin.name || admin.email.split('@')[0],
+          customerName: order.customerName,
+          orderNumber: order.orderNumber,
+          totalCents,
           currency: order.currency,
           paymentMethod: order.paymentMethod,
         }),
@@ -315,6 +356,12 @@ export class WhatsappNotificationsService {
 
     if (args.occasion === WhatsappOccasion.MARKETPLACE_PENDING_ADMIN) {
       return this.notifyMarketplacePendingAdmins(input);
+    }
+    if (args.occasion === WhatsappOccasion.MARKETPLACE_PAID_ADMIN) {
+      return this.notifyMarketplacePaidAdmins({
+        ...input,
+        totalCents: order.totalCents || order.subtotalCents,
+      });
     }
     if (args.occasion === WhatsappOccasion.MARKETPLACE_ORDER_RECEIVED_CUSTOMER) {
       return this.notifyCustomerOrderReceived(input, {

@@ -144,10 +144,17 @@ export class MarketplaceRepository {
     });
   }
 
+  private availableQty(product: {
+    stockQty: number;
+    reservedQty: number;
+  }): number {
+    return Math.max(0, product.stockQty - (product.reservedQty ?? 0));
+  }
+
   private async resolveLines(
     tx: Prisma.TransactionClient,
     lines: Array<{ productId: string; qty: number }>,
-    opts: { decrementStock: boolean },
+    opts: { decrementStock?: boolean; reserveStock?: boolean },
   ) {
     let subtotalCents = 0;
     let listSubtotalCents = 0;
@@ -177,16 +184,36 @@ export class MarketplaceRepository {
       if (!product || !product.published) {
         throw new Error(`UNAVAILABLE:${line.productId}`);
       }
-      if (product.stockQty < line.qty) {
+      const available = this.availableQty(product);
+      if (available < line.qty) {
         throw new Error(
-          `STOCK:${line.productId}:${product.stockQty}:${product.name}`,
+          `STOCK:${line.productId}:${available}:${product.name}`,
         );
       }
-      if (opts.decrementStock) {
-        await tx.marketplaceProduct.update({
-          where: { id: product.id },
-          data: { stockQty: { decrement: line.qty } },
-        });
+      if (opts.reserveStock) {
+        const held = await tx.$executeRaw`
+          UPDATE "marketplace_products"
+          SET "reservedQty" = "reservedQty" + ${line.qty}
+          WHERE "id" = ${product.id}
+            AND "stockQty" - "reservedQty" >= ${line.qty}
+        `;
+        if (Number(held) === 0) {
+          throw new Error(
+            `STOCK:${line.productId}:${available}:${product.name}`,
+          );
+        }
+      } else if (opts.decrementStock) {
+        const sold = await tx.$executeRaw`
+          UPDATE "marketplace_products"
+          SET "stockQty" = "stockQty" - ${line.qty}
+          WHERE "id" = ${product.id}
+            AND "stockQty" - "reservedQty" >= ${line.qty}
+        `;
+        if (Number(sold) === 0) {
+          throw new Error(
+            `STOCK:${line.productId}:${available}:${product.name}`,
+          );
+        }
       }
       currencies.add(product.currency.toUpperCase());
       const listUnitPriceCents = product.priceCents;
@@ -224,6 +251,48 @@ export class MarketplaceRepository {
       listSubtotalCents,
       orderCurrency: [...currencies][0] ?? 'USD',
     };
+  }
+
+  private async releaseReservedLines(
+    tx: Prisma.TransactionClient,
+    lines: MarketplaceCheckoutLineSnapshot[],
+  ) {
+    for (const line of lines) {
+      if (!line.productId || line.qty < 1) continue;
+      await tx.$executeRaw`
+        UPDATE "marketplace_products"
+        SET "reservedQty" = GREATEST(0, "reservedQty" - ${line.qty})
+        WHERE "id" = ${line.productId}
+      `;
+    }
+  }
+
+  private async consumeReservedLines(
+    tx: Prisma.TransactionClient,
+    lines: MarketplaceCheckoutLineSnapshot[],
+  ) {
+    for (const line of lines) {
+      const product = await tx.marketplaceProduct.findUnique({
+        where: { id: line.productId },
+      });
+      if (!product || !product.published) {
+        throw new Error(`UNAVAILABLE:${line.productId}`);
+      }
+      const consumed = await tx.$executeRaw`
+        UPDATE "marketplace_products"
+        SET
+          "stockQty" = "stockQty" - ${line.qty},
+          "reservedQty" = GREATEST(0, "reservedQty" - ${line.qty})
+        WHERE "id" = ${line.productId}
+          AND "stockQty" >= ${line.qty}
+          AND "reservedQty" >= ${line.qty}
+      `;
+      if (Number(consumed) === 0) {
+        throw new Error(
+          `STOCK:${line.productId}:${this.availableQty(product)}:${product.name}`,
+        );
+      }
+    }
   }
 
   /** Atomic stock decrement + order create inside a transaction (email checkout). */
@@ -416,15 +485,23 @@ export class MarketplaceRepository {
         if (!product || !product.published) {
           throw new Error(`UNAVAILABLE:${item.productId}`);
         }
-        if (product.stockQty < item.qty) {
+        const available = this.availableQty(product);
+        if (available < item.qty) {
           throw new Error(
-            `STOCK:${item.productId}:${product.stockQty}:${product.name}`,
+            `STOCK:${item.productId}:${available}:${product.name}`,
           );
         }
-        await tx.marketplaceProduct.update({
-          where: { id: product.id },
-          data: { stockQty: { decrement: item.qty } },
-        });
+        const sold = await tx.$executeRaw`
+          UPDATE "marketplace_products"
+          SET "stockQty" = "stockQty" - ${item.qty}
+          WHERE "id" = ${product.id}
+            AND "stockQty" - "reservedQty" >= ${item.qty}
+        `;
+        if (Number(sold) === 0) {
+          throw new Error(
+            `STOCK:${item.productId}:${available}:${product.name}`,
+          );
+        }
       }
 
       return tx.marketplaceOrder.findUnique({
@@ -597,7 +674,10 @@ export class MarketplaceRepository {
     return this.prisma.marketplaceOrder.update({
       where: { id: orderId },
       data,
-      include: { items: true },
+      include: {
+        items: true,
+        payments: { orderBy: { createdAt: 'desc' } },
+      },
     });
   }
 
@@ -609,7 +689,10 @@ export class MarketplaceRepository {
   findOrderById(id: string) {
     return this.prisma.marketplaceOrder.findUnique({
       where: { id },
-      include: { items: true },
+      include: {
+        items: true,
+        payments: { orderBy: { createdAt: 'desc' } },
+      },
     });
   }
 
@@ -647,7 +730,10 @@ export class MarketplaceRepository {
     return this.prisma.marketplaceOrder.update({
       where: { id },
       data,
-      include: { items: true },
+      include: {
+        items: true,
+        payments: { orderBy: { createdAt: 'desc' } },
+      },
     });
   }
 
@@ -687,6 +773,8 @@ export class MarketplaceRepository {
     notifyWhatsapp?: boolean;
     taxCents?: number;
     totalCents?: number;
+    /** When true (CARD), increments reservedQty before Cajita opens. */
+    reserveStock?: boolean;
     computeTax?: (subtotalCents: number) => {
       taxCents: number;
       totalCents: number;
@@ -695,7 +783,10 @@ export class MarketplaceRepository {
   }) {
     return this.prisma.$transaction(async (tx) => {
       const { resolved, subtotalCents, listSubtotalCents, orderCurrency } =
-        await this.resolveLines(tx, args.lines, { decrementStock: false });
+        await this.resolveLines(tx, args.lines, {
+          decrementStock: false,
+          reserveStock: !!args.reserveStock,
+        });
 
       const computed = args.computeTax?.(subtotalCents);
       const taxCents = computed?.taxCents ?? args.taxCents ?? 0;
@@ -755,10 +846,48 @@ export class MarketplaceRepository {
     });
   }
 
-  deleteOnlineCheckoutSessionByClientTxId(clientTransactionId: string) {
-    return this.prisma.marketplaceOnlineCheckoutSession.deleteMany({
-      where: { clientTransactionId },
+  /** Release reserved stock (CARD) and delete session. */
+  async releaseOnlineCheckoutSession(sessionId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const session = await tx.marketplaceOnlineCheckoutSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) return { released: false };
+      const lines =
+        session.lines as unknown as MarketplaceCheckoutLineSnapshot[];
+      if (session.paymentMethod === MarketplacePaymentMethod.CARD) {
+        await this.releaseReservedLines(tx, lines);
+      }
+      await tx.marketplaceOnlineCheckoutSession.delete({
+        where: { id: session.id },
+      });
+      return { released: true };
     });
+  }
+
+  async releaseOnlineCheckoutSessionByClientTxId(clientTransactionId: string) {
+    const session = await this.findOnlineCheckoutSessionByClientTxId(
+      clientTransactionId,
+    );
+    if (!session) return { released: false, clientTransactionId };
+    await this.releaseOnlineCheckoutSession(session.id);
+    return { released: true, clientTransactionId };
+  }
+
+  /** Drop CARD sessions older than cutoff and free reservedQty. */
+  async expireStaleCardCheckoutSessions(olderThan: Date) {
+    const stale = await this.prisma.marketplaceOnlineCheckoutSession.findMany({
+      where: {
+        paymentMethod: MarketplacePaymentMethod.CARD,
+        createdAt: { lt: olderThan },
+      },
+    });
+    let released = 0;
+    for (const session of stale) {
+      await this.releaseOnlineCheckoutSession(session.id);
+      released += 1;
+    }
+    return { released };
   }
 
   async finalizeOnlineCheckoutSession(args: {
@@ -781,23 +910,38 @@ export class MarketplaceRepository {
       if (!session) throw new Error('CHECKOUT_SESSION_NOT_FOUND');
 
       const lines = session.lines as unknown as MarketplaceCheckoutLineSnapshot[];
+      const isCardHold =
+        session.paymentMethod === MarketplacePaymentMethod.CARD &&
+        !!args.payphoneClientTxId;
 
-      for (const line of lines) {
-        const product = await tx.marketplaceProduct.findUnique({
-          where: { id: line.productId },
-        });
-        if (!product || !product.published) {
-          throw new Error(`UNAVAILABLE:${line.productId}`);
+      if (isCardHold) {
+        await this.consumeReservedLines(tx, lines);
+      } else {
+        for (const line of lines) {
+          const product = await tx.marketplaceProduct.findUnique({
+            where: { id: line.productId },
+          });
+          if (!product || !product.published) {
+            throw new Error(`UNAVAILABLE:${line.productId}`);
+          }
+          const available = this.availableQty(product);
+          if (available < line.qty) {
+            throw new Error(
+              `STOCK:${line.productId}:${available}:${product.name}`,
+            );
+          }
+          const sold = await tx.$executeRaw`
+            UPDATE "marketplace_products"
+            SET "stockQty" = "stockQty" - ${line.qty}
+            WHERE "id" = ${line.productId}
+              AND "stockQty" - "reservedQty" >= ${line.qty}
+          `;
+          if (Number(sold) === 0) {
+            throw new Error(
+              `STOCK:${line.productId}:${available}:${product.name}`,
+            );
+          }
         }
-        if (product.stockQty < line.qty) {
-          throw new Error(
-            `STOCK:${line.productId}:${product.stockQty}:${product.name}`,
-          );
-        }
-        await tx.marketplaceProduct.update({
-          where: { id: line.productId },
-          data: { stockQty: { decrement: line.qty } },
-        });
       }
 
       const order = await tx.marketplaceOrder.create({

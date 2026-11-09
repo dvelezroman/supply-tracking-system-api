@@ -92,6 +92,11 @@ export default () => ({
     /** Optional Ecuador coords for Cajita (Portoviejo default). */
     lat: process.env.PAYPHONE_LAT?.trim() || '-1.0547',
     lng: process.env.PAYPHONE_LNG?.trim() || '-80.4545',
+    /** Minutes a CARD stock hold stays before expire-on-next-checkout. */
+    stockHoldMinutes:
+      parseInt(process.env.PAYPHONE_STOCK_HOLD_MINUTES ?? '120', 10) || 120,
+    /** Merchant display name for Payphone email receipt. */
+    merchantName: process.env.PAYPHONE_MERCHANT_NAME?.trim() || '',
   },
   /** WhatsApp via Notificador Bitflow (WhatChimp). WhatsappService also reads process.env. */
   notificador: {

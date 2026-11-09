@@ -11,14 +11,17 @@ Documentación oficial: [Cajita de Pagos](https://docs.payphone.app/cajita-de-pa
 | Paso | Quién | Qué ocurre |
 |------|--------|------------|
 | 1 | Cliente | Elige **Pagar con tarjeta** en checkout |
-| 2 | API | Crea orden `AWAITING_PAYMENT` (stock **aún no** baja) y devuelve config de la Cajita |
+| 2 | API | Verifica stock disponible (`stockQty - reservedQty`). Si no hay, **error** y **no** abre Cajita. Si hay: crea `MarketplaceOnlineCheckoutSession`, sube `reservedQty` (hold) y devuelve config de la Cajita. **Aún no** existe `MarketplaceOrder`. |
 | 3 | Front | Renderiza Payphone Cajita v2 (modal) |
 | 4 | Payphone | Cliente paga; redirige a la **URL de respuesta** |
 | 5 | Front | `/tienda/pago/resultado` lee `id` + `clientTransactionId` |
 | 6 | API | `POST` a Payphone Confirm (Bearer token) en ≤ **5 minutos** |
-| 7 | API | Si aprobado: baja stock, marca `PAID`, email al admin |
+| 7 | API | Si aprobado: consume hold (`stockQty` ↓ y `reservedQty` ↓), crea pedido `PAID`, email tienda+cliente (constancia Payphone), WhatsApp admin + cliente |
+| 8 | Admin | Puede marcar el pedido `FULFILLED` (despacho manual; sin notificaciones extra) |
 
 Sin confirmación en 5 min, Payphone **revierte** el cobro automáticamente.
+
+**Suelta del hold** (`reservedQty` ↓ + borra sesión): abandon de Cajita, autorización no aprobada, mismatch de moneda, o sesión CARD más vieja que `PAYPHONE_STOCK_HOLD_MINUTES` (default 120) al iniciar otro checkout. Si el monto no cuadra tras autorización aprobada, el hold **se mantiene** para ops (no se invita a pagar de nuevo).
 
 ---
 
@@ -199,25 +202,30 @@ La opción de tarjeta en checkout solo aparece si:
 
 ### 5.2 Flujo feliz (tarjeta)
 
-1. Abrir `/tienda`, agregar productos al carrito.
+1. Abrir `/tienda`, agregar productos al carrito (stock en catálogo = disponible, sin unidades en hold).
 2. `/tienda/checkout` → datos cliente (nombre, email, teléfono Ecuador).
 3. Elegir **Pagar con tarjeta**.
 4. Verificar resumen: subtotal + **IVA 15%** + total.
-5. Confirmar → se abre el modal de la **Cajita**.
+5. Confirmar → API reserva stock → se abre el modal de la **Cajita**.
 6. Pagar con tarjeta / flujo de prueba de Payphone.
 7. Redirect a `/tienda/pago/resultado?id=...&clientTransactionId=...`.
 8. La app confirma en el API → redirige a `/tienda/pedido/{orderNumber}`.
-9. Orden en admin: estado **PAID**, stock decrementado.
-10. Email al correo configurado: asunto tipo pedido pagado + IVA + autorización.
+9. Orden en admin: estado **PAID**, stock consumido (hold liberado al vender).
+10. Email tienda + cliente con constancia Payphone (monto, IVA, autorización, referencia).
+11. WhatsApp a admins (pedido pagado) + WhatsApp al cliente (pago aprobado).
+12. Admin puede **Marcar despachado** → `FULFILLED`.
 
 ### 5.3 Casos negativos / borde
 
 | Caso | Resultado esperado |
 |------|--------------------|
-| Cerrar modal / Cajita no procede / pago rechazado | **No** queda orden; **sin** email/WhatsApp; mensaje: elija otra forma de pago; stock intacto |
-| Notificaciones | Payphone/PayPal: **solo** tras pago confirmado (email admin+cliente + WhatsApp cliente). Email/transferencia: al crear pedido (instrucciones + aviso admin) |
-| Cajita > ~10 min | Formulario expira; cerrar/reintentar o elegir otro método (sin orden) |
-| Confirm fallido | API descarta borrador CARD; redirect a checkout con `payphoneFailed=1` |
+| Sin stock disponible al iniciar CARD | Error de stock; **sin** Cajita ni `clientTransactionId` |
+| Cerrar modal / pago rechazado | Suelta hold; **no** queda orden; **sin** email/WhatsApp; mensaje: elija otra forma de pago |
+| Notificaciones | Payphone/PayPal: **solo** tras pago confirmado (email admin+cliente + WhatsApp admin+cliente). Email/transferencia: al crear pedido (instrucciones + aviso admin pendiente) |
+| Cajita > ~10 min | Formulario expira; abandon suelta hold; reintentar o elegir otro método |
+| Confirm no aprobado / moneda distinta | Suelta hold; redirect a checkout con `payphoneFailed=1` |
+| Monto distinto tras autorización | Hold **conservado**; no invita a segundo cobro |
+| Hold > `PAYPHONE_STOCK_HOLD_MINUTES` | Se libera al iniciar otro checkout CARD |
 | TOKEN/STORE mal | No aparece tarjeta, o error al iniciar / confirmar |
 | Dominio no registrado | Cajita: “Acceso denegado” |
 | `Referrer-Policy: no-referrer` | Mismo error de acceso; usar `origin` / `origin-when-cross-origin` (ya en `index.html`) |
@@ -258,6 +266,8 @@ PAYPHONE_PAYMENTS_ENABLED=true
 PAYPHONE_CONFIRM_URL=https://paymentbox.payphonetodoesposible.com/api/confirm
 MARKETPLACE_TAX_RATE_BPS=1500
 # PAYPHONE_CONFIRM_TIMEOUT_MS=15000
+# PAYPHONE_STOCK_HOLD_MINUTES=120
+# PAYPHONE_MERCHANT_NAME=Marea Alta
 # PAYPHONE_LAT=-1.0547
 # PAYPHONE_LNG=-80.4545
 ```
@@ -342,7 +352,7 @@ Sin Token/StoreID correctos, **no** basta con poner las 4 credenciales de Id Cli
 ## 9. Seguridad (recordatorio)
 
 - **Nunca** commits de `PAYPHONE_TOKEN` en git. Solo en `api/.env` del VPS (permisos restringidos, p. ej. `chmod 600`).
-- Confirmación Payphone **solo en el API** (Bearer no debe ir al browser salvo el token que la propia Cajita exige en el botón; ese token lo entrega el endpoint de checkout tras crear la orden).
+- Confirmación Payphone **solo en el API** (Bearer no debe ir al browser salvo el token que la propia Cajita exige en el botón; ese token lo entrega el endpoint de checkout tras crear la sesión + hold de stock).
 - En producción: HTTPS, dominio registrado, credenciales de **producción** distintas a pruebas.
 
 ---

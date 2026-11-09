@@ -42,15 +42,135 @@ export type OrderEmailBase = {
   authorizationCode?: string;
   payphoneTransactionId?: string;
   payphoneClientTxId?: string;
+  /** Merchant / store name from Payphone confirm or env. */
+  payphoneMerchantName?: string;
   paypalCaptureId?: string;
   paypalOrderId?: string;
   /** Primary transaction ref for customer-facing copy. */
   transactionReference?: string;
+  paidAt?: Date | string | null;
   bankTransfer?: BankTransferEmailDetails | null;
 };
 
+function payphonePaymentNumberDigits(payload: OrderEmailBase): string {
+  const raw =
+    payload.payphoneTransactionId?.trim() ||
+    payload.transactionReference?.trim() ||
+    '';
+  return raw.replace(/\D/g, '');
+}
+
+function orderGrandTotalCents(payload: OrderEmailBase): number {
+  if (payload.totalCents && payload.totalCents > 0) return payload.totalCents;
+  return payload.subtotalCents + (payload.taxCents ?? 0);
+}
+
+function formatPayphoneReceiptWhen(value?: Date | string | null): string {
+  const d =
+    value instanceof Date
+      ? value
+      : value
+        ? new Date(value)
+        : new Date();
+  if (Number.isNaN(d.getTime())) return new Date().toISOString();
+  return d.toLocaleString('es-EC', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function buildPayphoneConstanciaHtml(payload: OrderEmailBase): string {
+  const paymentNo = payphonePaymentNumberDigits(payload);
+  const merchant =
+    payload.payphoneMerchantName?.trim() ||
+    payload.fromName?.trim() ||
+    'Tienda';
+  const totalCents = orderGrandTotalCents(payload);
+  const headline = paymentNo
+    ? `El pago #${escapeHtml(paymentNo)} con ${escapeHtml(merchant)} ha sido aprobado`
+    : `Tu pago con ${escapeHtml(merchant)} ha sido aprobado`;
+  const ref =
+    payload.payphoneClientTxId?.trim() ||
+    payload.orderNumber?.trim() ||
+    '';
+  const taxNote =
+    (payload.taxCents ?? 0) > 0
+      ? `<p style="margin:14px 0 0;padding-top:12px;border-top:1px solid #bbf7d0;font-size:12px;line-height:1.5;color:#64748b;">Incluye IVA (15%): ${escapeHtml(formatMoney(payload.taxCents ?? 0, payload.currency))} · Subtotal: ${escapeHtml(formatMoney(payload.subtotalCents, payload.currency))}</p>`
+      : '';
+  const authRow = payload.authorizationCode?.trim()
+    ? `<tr>
+        <td style="padding:8px 0;font-size:13px;color:#64748b;vertical-align:top;">Autorización</td>
+        <td style="padding:8px 0;font-size:14px;font-weight:600;color:#0f172a;word-break:break-word;">${escapeHtml(payload.authorizationCode)}</td>
+      </tr>`
+    : '';
+
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 0;border-radius:16px;overflow:hidden;border:1px solid #bbf7d0;box-shadow:0 4px 24px rgba(15,23,42,0.06);">
+    <tr>
+      <td style="padding:18px 20px;background:linear-gradient(135deg,#ecfdf5 0%,#f0fdf4 100%);">
+        <p style="margin:0 0 6px;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#15803d;font-weight:700;">Pago aprobado</p>
+        <p style="margin:0;font-size:17px;line-height:1.4;font-weight:650;color:#0f172a;">${headline}</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:16px 20px 18px;background:#ffffff;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="padding:8px 0;font-size:13px;color:#64748b;width:28%;vertical-align:top;">Fecha</td>
+            <td style="padding:8px 0;font-size:15px;font-weight:600;color:#0f172a;">${escapeHtml(formatPayphoneReceiptWhen(payload.paidAt))}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;font-size:13px;color:#64748b;vertical-align:top;">Monto</td>
+            <td style="padding:8px 0;font-size:18px;font-weight:700;color:#15803d;">${escapeHtml(formatMoney(totalCents, payload.currency))}</td>
+          </tr>
+          ${
+            ref
+              ? `<tr>
+            <td style="padding:8px 0;font-size:13px;color:#64748b;vertical-align:top;">Referencia</td>
+            <td style="padding:8px 0;font-size:14px;line-height:1.45;color:#0f172a;word-break:break-word;">${escapeHtml(ref)}</td>
+          </tr>`
+              : ''
+          }
+          ${authRow}
+        </table>
+        ${taxNote}
+      </td>
+    </tr>
+  </table>`;
+}
+
+function buildPayphoneConstanciaText(payload: OrderEmailBase): string {
+  const paymentNo = payphonePaymentNumberDigits(payload);
+  const merchant =
+    payload.payphoneMerchantName?.trim() ||
+    payload.fromName?.trim() ||
+    'Tienda';
+  const totalCents = orderGrandTotalCents(payload);
+  const lines = [
+    '--- Pago Payphone aprobado ---',
+    paymentNo
+      ? `El pago #${paymentNo} con ${merchant} ha sido aprobado`
+      : `Tu pago con ${merchant} ha sido aprobado`,
+    `Fecha: ${formatPayphoneReceiptWhen(payload.paidAt)}`,
+    `Monto: ${formatMoney(totalCents, payload.currency)}`,
+  ];
+  if (payload.payphoneClientTxId?.trim()) {
+    lines.push(`Referencia: ${payload.payphoneClientTxId.trim()}`);
+  }
+  if (payload.authorizationCode?.trim()) {
+    lines.push(`Autorización: ${payload.authorizationCode.trim()}`);
+  }
+  if ((payload.taxCents ?? 0) > 0) {
+    lines.push(`IVA (15%): ${formatMoney(payload.taxCents ?? 0, payload.currency)}`);
+  }
+  return lines.join('\n');
+}
+
 export function buildPaymentConfirmationHtml(payload: OrderEmailBase): string {
   if (!payload.paymentConfirmed) return '';
+
+  if (payload.paymentMethod === 'CARD') {
+    return buildPayphoneConstanciaHtml(payload);
+  }
 
   const method =
     payload.paymentMethodLabel?.trim() ||
@@ -70,13 +190,6 @@ export function buildPaymentConfirmationHtml(payload: OrderEmailBase): string {
     payload.paypalOrderId !== payload.transactionReference
   ) {
     rows.push(['Pedido PayPal', payload.paypalOrderId]);
-  }
-  if (
-    payload.paymentMethod === 'CARD' &&
-    payload.payphoneClientTxId &&
-    payload.payphoneClientTxId !== payload.transactionReference
-  ) {
-    rows.push(['Referencia Payphone', payload.payphoneClientTxId]);
   }
   if (rows.length === 0) return '';
 
@@ -101,6 +214,9 @@ export function buildPaymentConfirmationHtml(payload: OrderEmailBase): string {
 
 export function buildPaymentConfirmationText(payload: OrderEmailBase): string {
   if (!payload.paymentConfirmed) return '';
+  if (payload.paymentMethod === 'CARD') {
+    return buildPayphoneConstanciaText(payload);
+  }
   const lines: string[] = ['--- Pago confirmado ---'];
   const method =
     payload.paymentMethodLabel?.trim() ||
@@ -118,13 +234,6 @@ export function buildPaymentConfirmationText(payload: OrderEmailBase): string {
     payload.paypalOrderId !== payload.transactionReference
   ) {
     lines.push(`Pedido PayPal: ${payload.paypalOrderId}`);
-  }
-  if (
-    payload.paymentMethod === 'CARD' &&
-    payload.payphoneClientTxId &&
-    payload.payphoneClientTxId !== payload.transactionReference
-  ) {
-    lines.push(`Referencia Payphone: ${payload.payphoneClientTxId}`);
   }
   return lines.length > 1 ? lines.join('\n') : '';
 }

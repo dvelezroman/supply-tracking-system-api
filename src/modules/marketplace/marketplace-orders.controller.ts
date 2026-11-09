@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -114,5 +115,13 @@ export class MarketplaceOrdersAdminController {
   })
   confirmPayment(@Param('id') id: string) {
     return this.marketplace.confirmOfflinePayment(id);
+  }
+
+  @Patch(':id/fulfill')
+  @ApiOperation({
+    summary: 'Mark PAID/EMAILED order as FULFILLED (manual dispatch)',
+  })
+  fulfill(@Param('id') id: string) {
+    return this.marketplace.markOrderFulfilled(id);
   }
 }

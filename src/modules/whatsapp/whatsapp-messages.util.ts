@@ -81,6 +81,29 @@ export function buildMarketplacePendingAdminCopy(args: {
   };
 }
 
+/** Admin — marketplace order fully paid (CARD / PayPal / offline confirm). */
+export function buildMarketplacePaidAdminCopy(args: {
+  adminName?: string | null;
+  customerName: string;
+  orderNumber: string;
+  totalCents: number;
+  currency?: string;
+  paymentMethod?: string | null;
+}): WhatsappTemplateCopy {
+  const method = paymentMethodLabel(args.paymentMethod);
+  return {
+    contact: truncateTemplateParam(args.adminName?.trim() || 'Ops', 40),
+    contentMessage: truncateTemplateParam(
+      `Pedido pagado (${method}).`,
+      WHATSAPP_CONTENT_MESSAGE_MAX_LENGTH,
+    ),
+    contentMessageExt: truncateTemplateParam(
+      `${args.customerName} · #${shortOrderId(args.orderNumber)} · ${moneyUsd(args.totalCents, args.currency)}`,
+      WHATSAPP_CONTENT_MESSAGE_EXT_MAX_LENGTH,
+    ),
+  };
+}
+
 export function buildMarketplaceOrderReceivedCustomerCopy(args: {
   customerName: string;
   orderNumber: string;

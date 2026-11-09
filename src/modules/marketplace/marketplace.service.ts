@@ -147,7 +147,7 @@ export class MarketplaceService implements OnModuleInit {
     if (!product || !product.published) {
       throw new NotFoundException('Product not found');
     }
-    return product;
+    return this.toPublicProduct(product);
   }
 
   async listAdmin(page?: number, limit?: number, search?: string, published?: boolean, category?: string) {
@@ -177,7 +177,24 @@ export class MarketplaceService implements OnModuleInit {
       this.repo.findProducts({ skip: (p - 1) * l, take: l, where }),
       this.repo.countProducts(where),
     ]);
-    return { items, total, page: p, limit: l, storeEnabled: true };
+    return {
+      items: items.map((item) => this.toPublicProduct(item)),
+      total,
+      page: p,
+      limit: l,
+      storeEnabled: true,
+    };
+  }
+
+  /** Storefront sees units not held by open CARD checkouts. */
+  private toPublicProduct<
+    T extends { stockQty: number; reservedQty?: number | null },
+  >(product: T) {
+    const reserved = Math.max(0, product.reservedQty ?? 0);
+    return {
+      ...product,
+      stockQty: Math.max(0, product.stockQty - reserved),
+    };
   }
 
   async updateProduct(id: string, dto: UpdateMarketplaceProductDto) {
@@ -657,6 +674,8 @@ export class MarketplaceService implements OnModuleInit {
       );
     }
 
+    await this.expireStaleCardStockHolds();
+
     const mergedLines = this.mergeOrderLines(dto.items);
     const plannedOrderNumber = this.generateOrderNumber();
     const clientTransactionId = truncateClientTxId(
@@ -675,6 +694,7 @@ export class MarketplaceService implements OnModuleInit {
         customerAddress: dto.customerAddress?.trim(),
         notes: dto.notes?.trim(),
         notifyWhatsapp: dto.notifyWhatsapp !== false,
+        reserveStock: true,
         lines: mergedLines,
         computeTax: (subtotalCents) => {
           const amounts = this.payphone.buildAmounts(subtotalCents);
@@ -688,10 +708,22 @@ export class MarketplaceService implements OnModuleInit {
     return this.buildCardCheckoutResponse(session, clientTransactionId);
   }
 
-  /** Drop pre-payment CARD session when buyer closes Cajita (no order row exists). */
+  private async expireStaleCardStockHolds() {
+    const minutes =
+      this.config.get<number>('payphone.stockHoldMinutes') ?? 120;
+    const cutoff = new Date(Date.now() - Math.max(1, minutes) * 60_000);
+    const result = await this.repo.expireStaleCardCheckoutSessions(cutoff);
+    if (result.released > 0) {
+      this.logger.log(
+        `Released ${result.released} stale CARD stock hold(s) older than ${minutes}m`,
+      );
+    }
+  }
+
+  /** Drop pre-payment CARD session and release reserved stock. */
   async abandonCardCheckoutSession(clientTransactionId: string) {
     const txId = truncateClientTxId(clientTransactionId);
-    await this.repo.deleteOnlineCheckoutSessionByClientTxId(txId);
+    await this.repo.releaseOnlineCheckoutSessionByClientTxId(txId);
     return { discarded: true, clientTransactionId: txId };
   }
 
@@ -739,7 +771,8 @@ export class MarketplaceService implements OnModuleInit {
     if (
       existingOrder &&
       (existingOrder.status === MarketplaceOrderStatus.PAID ||
-        existingOrder.status === MarketplaceOrderStatus.EMAILED)
+        existingOrder.status === MarketplaceOrderStatus.EMAILED ||
+        existingOrder.status === MarketplaceOrderStatus.FULFILLED)
     ) {
       return {
         orderNumber: existingOrder.orderNumber,
@@ -774,6 +807,7 @@ export class MarketplaceService implements OnModuleInit {
     );
 
     if (!this.payphone.isApproved(confirm)) {
+      await this.repo.releaseOnlineCheckoutSession(session.id).catch(() => undefined);
       const reason =
         confirm.message ||
         confirm.transactionStatus ||
@@ -794,9 +828,10 @@ export class MarketplaceService implements OnModuleInit {
       confirm.amount > 0 &&
       confirm.amount !== expectedAmount
     ) {
+      // Keep stock hold + session for ops; do not invite a second charge.
       throw new BadRequestException({
         message: 'Payment amount mismatch',
-        details: { chooseAnotherPaymentMethod: true },
+        details: { chooseAnotherPaymentMethod: false, holdKept: true },
       });
     }
 
@@ -804,6 +839,7 @@ export class MarketplaceService implements OnModuleInit {
       confirm.currency &&
       confirm.currency.toUpperCase() !== session.currency.toUpperCase()
     ) {
+      await this.repo.releaseOnlineCheckoutSession(session.id).catch(() => undefined);
       throw new BadRequestException({
         message: 'Payment currency mismatch',
         details: { chooseAnotherPaymentMethod: true },
@@ -838,6 +874,7 @@ export class MarketplaceService implements OnModuleInit {
         authorizationCode: confirm.authorizationCode ?? null,
         payphoneTransactionId:
           confirm.transactionId != null ? String(confirm.transactionId) : null,
+        payphoneMerchantName: confirm.storeName?.trim() || undefined,
       },
       settings,
       MarketplaceOrderStatus.PAID,
@@ -868,7 +905,8 @@ export class MarketplaceService implements OnModuleInit {
 
     if (
       order.status === MarketplaceOrderStatus.PAID ||
-      order.status === MarketplaceOrderStatus.EMAILED
+      order.status === MarketplaceOrderStatus.EMAILED ||
+      order.status === MarketplaceOrderStatus.FULFILLED
     ) {
       return {
         orderNumber: order.orderNumber,
@@ -935,7 +973,8 @@ export class MarketplaceService implements OnModuleInit {
     if (
       existingOrder &&
       (existingOrder.status === MarketplaceOrderStatus.PAID ||
-        existingOrder.status === MarketplaceOrderStatus.EMAILED)
+        existingOrder.status === MarketplaceOrderStatus.EMAILED ||
+        existingOrder.status === MarketplaceOrderStatus.FULFILLED)
     ) {
       return existingOrder;
     }
@@ -1138,6 +1177,8 @@ export class MarketplaceService implements OnModuleInit {
       payphoneClientTxId?: string | null;
       authorizationCode?: string | null;
       payphoneTransactionId?: string | null;
+      payphoneMerchantName?: string | null;
+      paidAt?: Date | null;
       items: Array<{
         name: string;
         sku: string;
@@ -1225,9 +1266,15 @@ export class MarketplaceService implements OnModuleInit {
       authorizationCode: paymentDetails?.authorizationCode,
       payphoneTransactionId: paymentDetails?.payphoneTransactionId,
       payphoneClientTxId: paymentDetails?.payphoneClientTxId,
+      payphoneMerchantName:
+        order.payphoneMerchantName?.trim() ||
+        this.config.get<string>('payphone.merchantName') ||
+        settings.fromName ||
+        undefined,
       paypalCaptureId: paymentDetails?.paypalCaptureId,
       paypalOrderId: paymentDetails?.paypalOrderId,
       transactionReference: paymentDetails?.transactionReference,
+      paidAt: order.paidAt ?? undefined,
       bankTransfer,
       items: order.items.map((i) => ({
         name: i.name,
@@ -1349,15 +1396,19 @@ export class MarketplaceService implements OnModuleInit {
         return;
       }
 
-      // Paid (PayPal / Payphone / offline confirm): customer paid notice.
-      // Admin already got store email (ORDER_PAID) from sendOrderEmails.
+      // Paid (PayPal / Payphone / offline confirm): admin + customer notices.
+      const amountCents =
+        args.order.totalCents && args.order.totalCents > 0
+          ? args.order.totalCents
+          : args.order.subtotalCents;
+      await this.whatsapp.notifyMarketplacePaidAdmins({
+        ...notifyInput,
+        totalCents: amountCents,
+      });
       await this.whatsapp.notifyCustomerPaymentApproved(notifyInput, {
         paymentMethodLabel: args.paymentDetails?.paymentMethodLabel,
         transactionReference: args.paymentDetails?.transactionReference,
-        amountCents:
-          args.order.totalCents && args.order.totalCents > 0
-            ? args.order.totalCents
-            : args.order.subtotalCents,
+        amountCents,
       });
     } catch (err) {
       this.logger.error(
@@ -1434,7 +1485,8 @@ export class MarketplaceService implements OnModuleInit {
         : null;
     const isPaidOnline =
       (order.status === MarketplaceOrderStatus.PAID ||
-        order.status === MarketplaceOrderStatus.EMAILED) &&
+        order.status === MarketplaceOrderStatus.EMAILED ||
+        order.status === MarketplaceOrderStatus.FULFILLED) &&
       this.isOnlinePaymentMethod(order.paymentMethod);
     const paymentDetails = isPaidOnline
       ? await this.resolveOrderPaymentDetails(order)
@@ -1469,10 +1521,34 @@ export class MarketplaceService implements OnModuleInit {
     };
   }
 
+  async markOrderFulfilled(id: string) {
+    const order = await this.findOrderById(id);
+    if (order.status === MarketplaceOrderStatus.FULFILLED) {
+      return order;
+    }
+    if (
+      order.status !== MarketplaceOrderStatus.PAID &&
+      order.status !== MarketplaceOrderStatus.EMAILED
+    ) {
+      throw new BadRequestException(
+        'Only PAID or EMAILED orders can be marked fulfilled',
+      );
+    }
+    return this.repo.updateOrder(id, {
+      status: MarketplaceOrderStatus.FULFILLED,
+      fulfilledAt: new Date(),
+    });
+  }
+
   async cancelOrder(id: string) {
     const order = await this.findOrderById(id);
     if (order.status === MarketplaceOrderStatus.CANCELLED) {
       throw new BadRequestException('Order already cancelled');
+    }
+    if (order.status === MarketplaceOrderStatus.FULFILLED) {
+      throw new BadRequestException(
+        'Fulfilled orders cannot be cancelled (stock already shipped)',
+      );
     }
     const wasPaid = this.orderRequiresRestockOnCancel(order);
     const cancelled = wasPaid

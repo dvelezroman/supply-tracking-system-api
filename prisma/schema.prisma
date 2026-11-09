@@ -169,6 +169,7 @@ enum MarketplaceOrderStatus {
   AWAITING_PAYMENT
   PAID
   PAYMENT_FAILED
+  FULFILLED
 }
 
 enum MarketplacePaymentMethod {
@@ -200,6 +201,8 @@ model MarketplaceProduct {
   promoDiscountPercent Int @default(0)
   currency       String  @default("USD")
   stockQty       Int     @default(0)
+  /// Units held by open CARD (Payphone) checkout sessions. Available = stockQty - reservedQty.
+  reservedQty    Int     @default(0)
   published      Boolean @default(false)
   /// Optional link to supply-chain Product for traceability context.
   traceProductId String?
@@ -260,6 +263,7 @@ model MarketplaceOrder {
   /// Payphone clientTransactionId (≤50 chars).
   payphoneClientTxId String?            @unique
   paidAt         DateTime?
+  fulfilledAt    DateTime?
   paymentError   String?
   /// When false, skip customer WhatsApp for this order (opt-out).
   notifyWhatsapp Boolean                @default(true)
